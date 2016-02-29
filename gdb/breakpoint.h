@@ -153,6 +153,7 @@ enum bptype
     bp_tracepoint,
     bp_fast_tracepoint,
     bp_static_tracepoint,
+	bp_lttng_tracepoint,
 
     /* A dynamic printf stops at the given location, does a formatted
        print, then automatically continues.  (Although this is sort of

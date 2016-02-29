@@ -6245,6 +6245,7 @@ bptype_string (enum bptype type)
     {bp_catchpoint, "catchpoint"},
     {bp_tracepoint, "tracepoint"},
     {bp_fast_tracepoint, "fast tracepoint"},
+	{bp_lttng_tracepoint, "lttng tracepoint"},
     {bp_static_tracepoint, "static tracepoint"},
     {bp_dprintf, "dprintf"},
     {bp_jit_event, "jit events"},
@@ -10200,6 +10201,12 @@ static void
 agent_printf_command (char *arg, int from_tty)
 {
   error (_("May only run agent-printf on the target"));
+}
+
+static void
+lttng_test_command(char *arg, int from_tty)
+{
+	error (_("Test print"));
 }
 
 /* Implement the "breakpoint_hit" breakpoint_ops method for
@@ -15271,6 +15278,28 @@ ftrace_command (char *arg, int from_tty)
   do_cleanups (back_to);
 }
 
+static void
+lttng_command(char *arg, int from_tty)
+{
+	struct event_location *location;
+	  struct cleanup *back_to;
+
+	  location = string_to_event_location (&arg, current_language);
+	  back_to = make_cleanup_delete_event_location (location);
+	  create_breakpoint (get_current_arch (),
+			     location,
+			     NULL, 0, arg, 1 /* parse arg */,
+			     0 /* tempflag */,
+			     bp_lttng_tracepoint /* type_wanted */,
+			     0 /* Ignore count */,
+			     pending_break_support,
+			     &tracepoint_breakpoint_ops,
+			     from_tty,
+			     1 /* enabled */,
+			     0 /* internal */, 0);
+	  do_cleanups (back_to);
+}
+
 /* strace command implementation.  Creates a static tracepoint.  */
 
 static void
@@ -16699,6 +16728,15 @@ even if GDB disconnects or detaches from the target."),
   add_com ("agent-printf", class_vars, agent_printf_command, _("\
 agent-printf \"printf format string\", arg1, arg2, arg3, ..., argn\n\
 (target agent only) This is useful for formatted output in user-defined commands."));
+
+  add_com("lttng-test", no_class, lttng_test_command, _("lttng-test print test string."));
+
+  c = add_com ("ltrace", class_breakpoint, lttng_command, _("\
+  Set an lttng tracepoint at specified location.\n\
+  \n"
+  BREAK_ARGS_HELP ("ltrace") "\n\
+  Do \"help tracepoints\" for info on other tracepoint commands."));
+
 
   automatic_hardware_breakpoints = 1;
 
