@@ -1175,7 +1175,8 @@ is_tracepoint_type (enum bptype type)
 {
   return (type == bp_tracepoint
 	  || type == bp_fast_tracepoint
-	  || type == bp_static_tracepoint);
+	  || type == bp_static_tracepoint
+	  || type == bp_lttng_tracepoint);
 }
 
 int
@@ -5948,6 +5949,7 @@ bpstat_what (bpstat bs_head)
 	case bp_tracepoint:
 	case bp_fast_tracepoint:
 	case bp_static_tracepoint:
+	case bp_lttng_tracepoint:
 	  /* Tracepoint hits should not be reported back to GDB, and
 	     if one got through somehow, it should have been filtered
 	     out already.  */
@@ -6245,8 +6247,8 @@ bptype_string (enum bptype type)
     {bp_catchpoint, "catchpoint"},
     {bp_tracepoint, "tracepoint"},
     {bp_fast_tracepoint, "fast tracepoint"},
-	{bp_lttng_tracepoint, "lttng tracepoint"},
     {bp_static_tracepoint, "static tracepoint"},
+	{bp_lttng_tracepoint, "lttng tracepoint"},
     {bp_dprintf, "dprintf"},
     {bp_jit_event, "jit events"},
     {bp_gnu_ifunc_resolver, "STT_GNU_IFUNC resolver"},
@@ -7371,6 +7373,7 @@ init_bp_location (struct bp_location *loc, const struct bp_location_ops *ops,
     case bp_tracepoint:
     case bp_fast_tracepoint:
     case bp_static_tracepoint:
+    case bp_lttng_tracepoint:
       loc->loc_type = bp_loc_other;
       break;
     default:
@@ -9827,7 +9830,7 @@ create_breakpoint (struct gdbarch *gdbarch,
     }
 
   /* Fast tracepoints may have additional restrictions on location.  */
-  if (!pending && type_wanted == bp_fast_tracepoint)
+  if (!pending && (type_wanted == bp_fast_tracepoint || type_wanted == bp_lttng_tracepoint))
     {
       int ix;
       struct linespec_sals *iter;
@@ -12286,6 +12289,9 @@ download_tracepoint_locations (void)
 	   : !may_insert_tracepoints))
 	continue;
 
+      if( (b->type == bp_lttng_tracepoint ? !may_insert_fast_tracepoints : !may_insert_tracepoints))
+    	  continue;
+
       if (can_download_tracepoint == TRIBOOL_UNKNOWN)
 	{
 	  if (target_can_download_tracepoint ())
@@ -13534,6 +13540,10 @@ tracepoint_print_mention (struct breakpoint *b)
       printf_filtered (_("Static tracepoint"));
       printf_filtered (_(" %d"), b->number);
       break;
+    case bp_lttng_tracepoint:
+    	printf_filtered(_("Lttng tracepoint"));
+    	printf_filtered(_(" %d"), b->number));
+    	break;
     default:
       internal_error (__FILE__, __LINE__,
 		      _("unhandled tracepoint type %d"), (int) b->type);
@@ -13549,6 +13559,8 @@ tracepoint_print_recreate (struct breakpoint *self, struct ui_file *fp)
 
   if (self->type == bp_fast_tracepoint)
     fprintf_unfiltered (fp, "ftrace");
+  else if (self->type == bp_lttng_tracepoint)
+	  fprintf_unfiltered(fp, "ltrace");
   else if (self->type == bp_static_tracepoint)
     fprintf_unfiltered (fp, "strace");
   else if (self->type == bp_tracepoint)

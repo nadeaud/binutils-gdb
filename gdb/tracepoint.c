@@ -1796,7 +1796,7 @@ start_tracing (char *notes)
       if (b->enable_state == bp_enabled)
 	any_enabled = 1;
 
-      if ((b->type == bp_fast_tracepoint
+      if ((b->type == bp_fast_tracepoint || b->type == bp_lttng_tracepoint
 	   ? may_insert_fast_tracepoints
 	   : may_insert_tracepoints))
 	++num_to_download;
@@ -1836,7 +1836,7 @@ start_tracing (char *notes)
       for (loc = b->loc; loc; loc = loc->next)
 	loc->inserted = 0;
 
-      if ((b->type == bp_fast_tracepoint
+      if ((b->type == bp_fast_tracepoint || b->type == bp_lttng_tracepoint
 	   ? !may_insert_fast_tracepoints
 	   : !may_insert_tracepoints))
 	continue;
@@ -1947,7 +1947,7 @@ stop_tracing (char *note)
     {
       struct bp_location *loc;
 
-      if ((t->type == bp_fast_tracepoint
+      if ((t->type == bp_fast_tracepoint || t->type == bp_lttng_tracepoint
 	   ? !may_insert_fast_tracepoints
 	   : !may_insert_tracepoints))
 	continue;
@@ -3789,6 +3789,12 @@ parse_tracepoint_definition (char *line, struct uploaded_tp **utpp)
 	      p++;
 	      p = unpack_varlen_hex (p, &orig_size);
 	    }
+	  else if(*p == 'L')
+	  {
+		  type = bp_lttng_tracepoint;
+		  p++;
+		  p= unpack_varlen_hex (p, &orig_size);
+	  }
 	  else if (*p == 'S')
 	    {
 	      type = bp_static_tracepoint;

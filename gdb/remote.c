@@ -11903,6 +11903,29 @@ remote_download_tracepoint (struct target_ops *self, struct bp_location *loc)
 	warning (_("Target does not support fast tracepoints, "
 		   "downloading %d as regular tracepoint"), b->number);
     }
+  else if(b->type == bp_lttng_tracepoint)
+  {
+	  /* Only test for support at download time; we may not know
+	  	 target capabilities at definition time.  */
+	  if(remote_supports_fast_tracepoints())
+	  {
+		  if (gdbarch_fast_tracepoint_valid_at (loc->gdbarch, tpaddr,NULL))
+			  // L : to specify that we want a lttng tracepoint
+			  xsnprintf (buf + strlen (buf), BUF_SIZE - strlen (buf), ":L%x",gdb_insn_length (loc->gdbarch, tpaddr));
+
+		  	  else
+		  	    /* If it passed validation at definition but fails now,
+		  	       something is very wrong.  */
+		  	    internal_error (__FILE__, __LINE__,
+		  			    _("Fast tracepoint not "
+		  			      "valid during download"));
+	  }
+	  else
+		  /* Fast tracepoints are functionally identical to regular
+			tracepoints, so don't take lack of support as a reason to
+			give up on the trace run.  */
+		  warning (_("Target does not support fast tracepoints, downloading %d as regular tracepoint"), b->number);
+  }
   else if (b->type == bp_static_tracepoint)
     {
       /* Only test for support at download time; we may not know
