@@ -471,6 +471,34 @@ struct target_ops
   /* Return 1 if the target supports catch syscall, 0 (or leave the
      callback NULL) otherwise.  */
   int (*supports_catch_syscall) (void);
+
+  /* Install a fast lttng tracepoint jump pad.  TPOINT is the address of the
+       tracepoint internal object as used by the IPA agent.  TPADDR is
+       the address of tracepoint.  COLLECTOR is address of the function
+       the jump pad redirects to.  LOCKADDR is the address of the jump
+       pad lock object.  ORIG_SIZE is the size in bytes of the
+       instruction at TPADDR.  JUMP_ENTRY points to the address of the
+       jump pad entry, and on return holds the address past the end of
+       the created jump pad.  If a trampoline is created by the function,
+       then TRAMPOLINE and TRAMPOLINE_SIZE return the address and size of
+       the trampoline, else they remain unchanged.  JJUMP_PAD_INSN is a
+       buffer containing a copy of the instruction at TPADDR.
+       ADJUST_INSN_ADDR and ADJUST_INSN_ADDR_END are output parameters that
+       return the address range where the instruction at TPADDR was relocated
+       to.  If an error occurs, the ERR may be used to pass on an error
+       message.  */
+    int (*install_lttng_tracepoint_jump_pad) (CORE_ADDR tpoint, CORE_ADDR tpaddr,
+  					   CORE_ADDR collector,
+  					   CORE_ADDR lockaddr,
+  					   ULONGEST orig_size,
+  					   CORE_ADDR *jump_entry,
+  					   CORE_ADDR *trampoline,
+  					   ULONGEST *trampoline_size,
+  					   unsigned char *jjump_pad_insn,
+  					   ULONGEST *jjump_pad_insn_size,
+  					   CORE_ADDR *adjusted_insn_addr,
+  					   CORE_ADDR *adjusted_insn_addr_end,
+  					   char *err);
 };
 
 extern struct target_ops *the_target;
@@ -596,6 +624,27 @@ int kill_inferior (int);
 					 adjusted_insn_addr_end,	\
 					 err)				\
   (*the_target->install_fast_tracepoint_jump_pad) (tpoint, tpaddr,	\
+						   collector,lockaddr,	\
+						   orig_size, jump_entry, \
+						   trampoline,		\
+						   trampoline_size,	\
+						   jjump_pad_insn,	\
+						   jjump_pad_insn_size, \
+						   adjusted_insn_addr,	\
+						   adjusted_insn_addr_end, \
+						   err)
+
+#define install_lttng_tracepoint_jump_pad(tpoint, tpaddr,		\
+					 collector, lockaddr,		\
+					 orig_size,			\
+					 jump_entry,			\
+					 trampoline, trampoline_size,	\
+					 jjump_pad_insn,		\
+					 jjump_pad_insn_size,		\
+					 adjusted_insn_addr,		\
+					 adjusted_insn_addr_end,	\
+					 err)				\
+  (*the_target->install_lttng_tracepoint_jump_pad) (tpoint, tpaddr,	\
 						   collector,lockaddr,	\
 						   orig_size, jump_entry, \
 						   trampoline,		\

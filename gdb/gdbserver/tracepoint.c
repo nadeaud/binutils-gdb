@@ -30,6 +30,8 @@
 #include "ax.h"
 #include "tdesc.h"
 
+//#undef IN_PROCESS_AGENT
+
 #define DEFAULT_TRACE_BUFFER_SIZE 5242880 /* 5*1024*1024 */
 
 /* This file is built for both GDBserver, and the in-process
@@ -690,7 +692,10 @@ enum tracepoint_type
 
   /* A static tracepoint, implemented by a program call into a tracing
      library.  */
-  static_tracepoint
+  static_tracepoint,
+
+  /* A fast tracepoint that uses lttng-ust to collect data. */
+  lttng_tracepoint
 };
 
 struct tracepoint_hit_ctx;
@@ -3139,6 +3144,67 @@ install_fast_tracepoint (struct tracepoint *tpoint, char *errbuf)
   return 0;
 }
 
+/* Install fast lttng  tracepoint.  Return 0 if successful, otherwise return
+   non-zero.  */
+
+static int
+install_lttng_tracepoint (struct tracepoint *tpoint, char *errbuf)
+{
+  CORE_ADDR jentry, jump_entry;
+  CORE_ADDR trampoline;
+  ULONGEST trampoline_size;
+  int err = 0;
+  /* The jump to the jump pad of the last fast tracepoint
+     installed.  */
+  unsigned char fjump[MAX_JUMP_SIZE];
+  ULONGEST fjump_size;
+
+  if (tpoint->orig_size < target_get_min_fast_tracepoint_insn_len ())
+    {
+      trace_debug ("Requested a fast tracepoint on an instruction "
+		   "that is of less than the minimum length.");
+      return 0;
+    }
+
+  jentry = jump_entry = get_jump_space_head ();
+
+  trampoline = 0;
+  trampoline_size = 0;
+
+  /* Install the jump pad.  */
+  err = install_lttng_tracepoint_jump_pad (tpoint->obj_addr_on_target,
+					  tpoint->address,
+					  ipa_sym_addrs.addr_gdb_collect,
+					  ipa_sym_addrs.addr_collecting,
+					  tpoint->orig_size,
+					  &jentry,
+					  &trampoline, &trampoline_size,
+					  fjump, &fjump_size,
+					  &tpoint->adjusted_insn_addr,
+					  &tpoint->adjusted_insn_addr_end,
+					  errbuf);
+
+  if (err)
+    return 1;
+
+  /* Wire it in.  */
+  tpoint->handle = set_fast_tracepoint_jump (tpoint->address, fjump,
+					     fjump_size);
+
+  if (tpoint->handle != NULL)
+    {
+      tpoint->jump_pad = jump_entry;
+      tpoint->jump_pad_end = jentry;
+      tpoint->trampoline = trampoline;
+      tpoint->trampoline_end = trampoline + trampoline_size;
+
+      /* Pad to 8-byte alignment.  */
+      jentry = ((jentry + 7) & ~0x7);
+      claim_jump_space (jentry - jump_entry);
+    }
+
+  return 0;
+}
 
 /* Install tracepoint TPOINT, and write reply message in OWN_BUF.  */
 
@@ -3252,7 +3318,8 @@ cmd_qtstart (char *packet)
 					      tracepoint_handler);
 	}
       else if (tpoint->type == fast_tracepoint
-	       || tpoint->type == static_tracepoint)
+	       || tpoint->type == static_tracepoint
+		   || tpoint->type == lttng_tracepoint)
 	{
 	  if (maybe_write_ipa_not_loaded (packet))
 	    {
@@ -3296,6 +3363,37 @@ cmd_qtstart (char *packet)
 		    prev_ftpoint = tpoint;
 		}
 	    }
+	  else if (tpoint->type == lttng_tracepoint)
+	  {
+		  int use_agent_p = use_agent && agent_capability_check (AGENT_CAPA_FAST_TRACE);
+
+		  if (prev_ftpoint != NULL && prev_ftpoint->address == tpoint->address)
+		  {
+			  if (use_agent_p)
+				  tracepoint_send_agent (tpoint);
+			  else
+				  download_tracepoint_1 (tpoint);
+
+			  clone_fast_tracepoint (tpoint, prev_ftpoint);
+		  }
+		  else
+		  {
+			  /* Tracepoint is installed successfully?  */
+			  int installed = 0;
+
+			  /* Download and install fast tracepoint by agent.  */
+			  if (use_agent_p)
+				  installed = !tracepoint_send_agent (tpoint);
+			  else
+			  {
+				  download_tracepoint_1 (tpoint);
+				  installed = !install_lttng_tracepoint (tpoint, packet);
+			  }
+
+			  if (installed)
+				  prev_ftpoint = tpoint;
+		  }
+	  }
 	  else
 	    {
 	      if (!in_process_agent_supports_ust ())
@@ -6006,7 +6104,8 @@ download_tracepoint_1 (struct tracepoint *tpoint)
   CORE_ADDR tpptr = 0;
 
   gdb_assert (tpoint->type == fast_tracepoint
-	      || tpoint->type == static_tracepoint);
+	      || tpoint->type == static_tracepoint
+		  || tpoint->type == lttng_tracepoint);
 
   if (tpoint->cond != NULL && target_emit_ops () != NULL)
     {

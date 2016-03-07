@@ -246,6 +246,21 @@ struct linux_target_ops
      due to SYSCALL_SIGTRAP.  */
   void (*get_syscall_trapinfo) (struct regcache *regcache,
 				int *sysno, int *sysret);
+
+  /* Install a fast lttng tracepoint jump pad.  See target.h for
+       comments.  */
+    int (*install_lttng_tracepoint_jump_pad) (CORE_ADDR tpoint, CORE_ADDR tpaddr,
+  					   CORE_ADDR collector,
+  					   CORE_ADDR lockaddr,
+  					   ULONGEST orig_size,
+  					   CORE_ADDR *jump_entry,
+  					   CORE_ADDR *trampoline,
+  					   ULONGEST *trampoline_size,
+  					   unsigned char *jjump_pad_insn,
+  					   ULONGEST *jjump_pad_insn_size,
+  					   CORE_ADDR *adjusted_insn_addr,
+  					   CORE_ADDR *adjusted_insn_addr_end,
+  					   char *err);
 };
 
 extern struct linux_target_ops the_low_target;
