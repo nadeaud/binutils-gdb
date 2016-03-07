@@ -13542,7 +13542,7 @@ tracepoint_print_mention (struct breakpoint *b)
       break;
     case bp_lttng_tracepoint:
     	printf_filtered(_("Lttng tracepoint"));
-    	printf_filtered(_(" %d"), b->number));
+    	printf_filtered(_(" %d"), b->number);
     	break;
     default:
       internal_error (__FILE__, __LINE__,

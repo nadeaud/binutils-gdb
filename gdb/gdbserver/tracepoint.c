@@ -30,6 +30,10 @@
 #include "ax.h"
 #include "tdesc.h"
 
+#include "lttng-collect.h"
+
+//#undef IN_PROCESS_AGENT
+
 #define DEFAULT_TRACE_BUFFER_SIZE 5242880 /* 5*1024*1024 */
 
 /* This file is built for both GDBserver, and the in-process
@@ -3272,7 +3276,10 @@ cmd_qtstart (char *packet)
 		  && prev_ftpoint->address == tpoint->address)
 		{
 		  if (use_agent_p)
+		  {
 		    tracepoint_send_agent (tpoint);
+			warning ("in jump pad, but no matching tpoint?");
+		  }
 		  else
 		    download_tracepoint_1 (tpoint);
 
@@ -3290,6 +3297,7 @@ cmd_qtstart (char *packet)
 		    {
 		      download_tracepoint_1 (tpoint);
 		      installed = !install_fast_tracepoint (tpoint, packet);
+		      warning ("download tracepoint");
 		    }
 
 		  if (installed)
@@ -5800,6 +5808,7 @@ gdb_collect (struct tracepoint *tpoint, unsigned char *regs)
 {
   struct fast_tracepoint_ctx ctx;
 
+  tracepoint(gdb_trace, lttng_tracepoint,42);
   /* Don't do anything until the trace run is completely set up.  */
   if (!tracing)
     return;
