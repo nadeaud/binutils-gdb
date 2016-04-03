@@ -30,7 +30,13 @@
 #include "ax.h"
 #include "tdesc.h"
 
+#include <stdlib.h>
+#include <stdio.h>
+
+#include "lttng-collect.h"
+
 //#undef IN_PROCESS_AGENT
+#define IN_PROCESS_AGENT
 
 #define DEFAULT_TRACE_BUFFER_SIZE 5242880 /* 5*1024*1024 */
 
@@ -136,6 +142,7 @@ trace_vdebug (const char *fmt, ...)
 # define ust_loaded IPA_SYM_EXPORTED_NAME (ust_loaded)
 # define helper_thread_id IPA_SYM_EXPORTED_NAME (helper_thread_id)
 # define cmd_buf IPA_SYM_EXPORTED_NAME (cmd_buf)
+# define lttng_collect IPA_SYM_EXPORTED_NAME (lttng_collect)
 #endif
 
 #ifndef IN_PROCESS_AGENT
@@ -173,6 +180,7 @@ struct ipa_sym_addresses
   CORE_ADDR addr_get_trace_state_variable_value;
   CORE_ADDR addr_set_trace_state_variable_value;
   CORE_ADDR addr_ust_loaded;
+  CORE_ADDR addr_lttng_collect;
 };
 
 static struct
@@ -209,6 +217,7 @@ static struct
   IPA_SYM(get_trace_state_variable_value),
   IPA_SYM(set_trace_state_variable_value),
   IPA_SYM(ust_loaded),
+  IPA_SYM(lttng_collect),
 };
 
 static struct ipa_sym_addresses ipa_sym_addrs;
@@ -1384,6 +1393,12 @@ static void compile_tracepoint_condition (struct tracepoint *tpoint,
 					  CORE_ADDR *jump_entry);
 #endif
 static void do_action_at_tracepoint (struct tracepoint_hit_ctx *ctx,
+				     CORE_ADDR stop_pc,
+				     struct tracepoint *tpoint,
+				     struct traceframe *tframe,
+				     struct tracepoint_action *taction);
+
+static void do_action_at_lttng_tracepoint (struct tracepoint_hit_ctx *ctx,
 				     CORE_ADDR stop_pc,
 				     struct tracepoint *tpoint,
 				     struct traceframe *tframe,
@@ -3174,7 +3189,7 @@ install_lttng_tracepoint (struct tracepoint *tpoint, char *errbuf)
   /* Install the jump pad.  */
   err = install_lttng_tracepoint_jump_pad (tpoint->obj_addr_on_target,
 					  tpoint->address,
-					  ipa_sym_addrs.addr_gdb_collect,
+					  ipa_sym_addrs.addr_lttng_collect,
 					  ipa_sym_addrs.addr_collecting,
 					  tpoint->orig_size,
 					  &jentry,
@@ -4763,6 +4778,54 @@ collect_data_at_tracepoint (struct tracepoint_hit_ctx *ctx, CORE_ADDR stop_pc,
 
 	  do_action_at_tracepoint (ctx, stop_pc, tpoint, tframe,
 				   tpoint->actions[acti]);
+	  //printf("%c \n", tpoint->actions[acti]->type);
+	}
+
+      finish_traceframe (tframe);
+    }
+
+  if (tframe == NULL && tracing)
+    trace_buffer_is_full = 1;
+}
+
+static void
+collect_data_at_lttng_tracepoint (struct tracepoint_hit_ctx *ctx, CORE_ADDR stop_pc,
+			    struct tracepoint *tpoint)
+{
+  struct traceframe *tframe;
+  int acti;
+
+  /* Only count it as a hit when we actually collect data.  */
+  tpoint->hit_count++;
+
+  /* If we've exceeded a defined pass count, record the event for
+     later, and finish the collection for this hit.  This test is only
+     for nonstepping tracepoints, stepping tracepoints test at the end
+     of their while-stepping loop.  */
+  if (tpoint->pass_count > 0
+      && tpoint->hit_count >= tpoint->pass_count
+      && tpoint->step_count == 0
+      && stopping_tracepoint == NULL)
+    stopping_tracepoint = tpoint;
+
+  trace_debug ("Making new traceframe for tracepoint %d at 0x%s, hit %" PRIu64,
+	       tpoint->number, paddress (tpoint->address), tpoint->hit_count);
+
+  tframe = add_traceframe (tpoint);
+
+  if (tframe)
+    {
+      for (acti = 0; acti < tpoint->numactions; ++acti)
+	{
+#ifndef IN_PROCESS_AGENT
+	  trace_debug ("Tracepoint %d at 0x%s about to do action '%s'",
+		       tpoint->number, paddress (tpoint->address),
+		       tpoint->actions_str[acti]);
+#endif
+
+	  do_action_at_lttng_tracepoint (ctx, stop_pc, tpoint, tframe,
+				   tpoint->actions[acti]);
+	  //printf("%c \n", tpoint->actions[acti]->type);
 	}
 
       finish_traceframe (tframe);
@@ -4878,60 +4941,62 @@ do_action_at_tracepoint (struct tracepoint_hit_ctx *ctx,
 			 struct traceframe *tframe,
 			 struct tracepoint_action *taction)
 {
-  enum eval_result_type err;
+	enum eval_result_type err;
 
-  switch (taction->type)
-    {
-    case 'M':
-      {
-	struct collect_memory_action *maction;
-	struct eval_agent_expr_context ax_ctx;
+	switch (taction->type)
+	{
+	case 'M':
+	{
+		struct collect_memory_action *maction;
+		struct eval_agent_expr_context ax_ctx;
 
-	maction = (struct collect_memory_action *) taction;
-	ax_ctx.regcache = NULL;
-	ax_ctx.tframe = tframe;
-	ax_ctx.tpoint = tpoint;
+		maction = (struct collect_memory_action *) taction;
+		ax_ctx.regcache = NULL;
+		ax_ctx.tframe = tframe;
+		ax_ctx.tpoint = tpoint;
 
-	trace_debug ("Want to collect %s bytes at 0x%s (basereg %d)",
-		     pulongest (maction->len),
-		     paddress (maction->addr), maction->basereg);
-	/* (should use basereg) */
-	agent_mem_read (&ax_ctx, NULL, (CORE_ADDR) maction->addr,
-			maction->len);
-	break;
-      }
-    case 'R':
-      {
-	unsigned char *regspace;
-	struct regcache tregcache;
-	struct regcache *context_regcache;
-	int regcache_size;
+		trace_debug ("Want to collect %s bytes at 0x%s (basereg %d)",
+				pulongest (maction->len),
+				paddress (maction->addr), maction->basereg);
+		fprintf(stdout, "Want to collect %s bytes at 0x%s (basereg %d)", pulongest (maction->len),
+				paddress (maction->addr), maction->basereg);
+		/* (should use basereg) */
+		agent_mem_read (&ax_ctx, NULL, (CORE_ADDR) maction->addr,
+				maction->len);
+		break;
+	}
+	case 'R':
+	{
+		unsigned char *regspace;
+		struct regcache tregcache;
+		struct regcache *context_regcache;
+		int regcache_size;
 
-	trace_debug ("Want to collect registers");
+		trace_debug ("Want to collect registers");
+		context_regcache = get_context_regcache (ctx);
+		regcache_size = register_cache_size (context_regcache->tdesc);
 
-	context_regcache = get_context_regcache (ctx);
-	regcache_size = register_cache_size (context_regcache->tdesc);
+		fprintf(stdout, "Want to collect all %d registers", regcache_size);
+		/* Collect all registers for now.  */
+		regspace = add_traceframe_block (tframe, tpoint, 1 + regcache_size);
+		if (regspace == NULL)
+		{
+			trace_debug ("Trace buffer block allocation failed, skipping");
+			break;
+		}
+		/* Identify a register block.  */
+		*regspace = 'R';
 
-	/* Collect all registers for now.  */
-	regspace = add_traceframe_block (tframe, tpoint, 1 + regcache_size);
-	if (regspace == NULL)
-	  {
-	    trace_debug ("Trace buffer block allocation failed, skipping");
-	    break;
-	  }
-	/* Identify a register block.  */
-	*regspace = 'R';
-
-	/* Wrap the regblock in a register cache (in the stack, we
+		/* Wrap the regblock in a register cache (in the stack, we
 	   don't want to malloc here).  */
-	init_register_cache (&tregcache, context_regcache->tdesc,
-			     regspace + 1);
+		init_register_cache (&tregcache, context_regcache->tdesc,
+				regspace + 1);
 
-	/* Copy the register data to the regblock.  */
-	regcache_cpy (&tregcache, context_regcache);
+		/* Copy the register data to the regblock.  */
+		regcache_cpy (&tregcache, context_regcache);
 
 #ifndef IN_PROCESS_AGENT
-	/* On some platforms, trap-based tracepoints will have the PC
+		/* On some platforms, trap-based tracepoints will have the PC
 	   pointing to the next instruction after the trap, but we
 	   don't want the user or GDB trying to guess whether the
 	   saved PC needs adjusting; so always record the adjusted
@@ -4941,51 +5006,185 @@ do_action_at_tracepoint (struct tracepoint_hit_ctx *ctx,
 	   in-process lib (but not if GDBserver is collecting one
 	   preemptively), since the PC had already been adjusted to
 	   contain the tracepoint's address by the jump pad.  */
-	trace_debug ("Storing stop pc (0x%s) in regblock",
-		     paddress (stop_pc));
+		trace_debug ("Storing stop pc (0x%s) in regblock",
+				paddress (stop_pc));
 
-	/* This changes the regblock, not the thread's
+		/* This changes the regblock, not the thread's
 	   regcache.  */
-	regcache_write_pc (&tregcache, stop_pc);
+		regcache_write_pc (&tregcache, stop_pc);
 #endif
-      }
-      break;
-    case 'X':
-      {
-	struct eval_expr_action *eaction;
-	struct eval_agent_expr_context ax_ctx;
+	}
+	break;
+	case 'X':
+	{
+		struct eval_expr_action *eaction;
+		struct eval_agent_expr_context ax_ctx;
 
-	eaction = (struct eval_expr_action *) taction;
-	ax_ctx.regcache = get_context_regcache (ctx);
-	ax_ctx.tframe = tframe;
-	ax_ctx.tpoint = tpoint;
+		eaction = (struct eval_expr_action *) taction;
+		ax_ctx.regcache = get_context_regcache (ctx);
+		ax_ctx.tframe = tframe;
+		ax_ctx.tpoint = tpoint;
 
-	trace_debug ("Want to evaluate expression");
+		trace_debug ("Want to evaluate expression");
 
-	err = gdb_eval_agent_expr (&ax_ctx, eaction->expr, NULL);
+		err = gdb_eval_agent_expr (&ax_ctx, eaction->expr, NULL);
 
-	if (err != expr_eval_no_error)
-	  {
-	    record_tracepoint_error (tpoint, "action expression", err);
-	    return;
-	  }
-      }
-      break;
-    case 'L':
-      {
+		if (err != expr_eval_no_error)
+		{
+			record_tracepoint_error (tpoint, "action expression", err);
+			return;
+		}
+	}
+	break;
+	case 'L':
+	{
 #if defined IN_PROCESS_AGENT && defined HAVE_UST
-	trace_debug ("Want to collect static trace data");
-	collect_ust_data_at_tracepoint (ctx, tframe);
+		trace_debug ("Want to collect static trace data");
+		collect_ust_data_at_tracepoint (ctx, tframe);
 #else
-	trace_debug ("warning: collecting static trace data, "
-		     "but static tracepoints are not supported");
+		trace_debug ("warning: collecting static trace data, "
+				"but static tracepoints are not supported");
 #endif
-      }
-      break;
-    default:
-      trace_debug ("unknown trace action '%c', ignoring", taction->type);
-      break;
-    }
+	}
+	break;
+	default:
+		trace_debug ("unknown trace action '%c', ignoring", taction->type);
+		break;
+	}
+}
+
+static void
+do_action_at_lttng_tracepoint (struct tracepoint_hit_ctx *ctx,
+			 CORE_ADDR stop_pc,
+			 struct tracepoint *tpoint,
+			 struct traceframe *tframe,
+			 struct tracepoint_action *taction)
+{
+	enum eval_result_type err;
+
+	switch (taction->type)
+	{
+	case 'M':
+	{
+		/*
+		struct collect_memory_action *maction;
+		struct eval_agent_expr_context ax_ctx;
+
+		maction = (struct collect_memory_action *) taction;
+		ax_ctx.regcache = NULL;
+		ax_ctx.tframe = tframe;
+		ax_ctx.tpoint = tpoint;
+
+		trace_debug ("Want to collect %s bytes at 0x%s (basereg %d)",
+				pulongest (maction->len),
+				paddress (maction->addr), maction->basereg);
+		fprintf(stdout, "Want to collect %s bytes at 0x%s (basereg %d)", pulongest (maction->len),
+				paddress (maction->addr), maction->basereg);
+		/* (should use basereg)
+		agent_mem_read (&ax_ctx, NULL, (CORE_ADDR) maction->addr,
+				maction->len);
+		 */
+		break;
+	}
+	case 'R':
+	{
+		unsigned char *regspace;
+		struct regcache tregcache;
+		struct regcache *context_regcache;
+		int regcache_size;
+
+		trace_debug ("Want to collect registers");
+		context_regcache = get_context_regcache (ctx);
+		// As a demo, only collect 17 registers (rax to rip)
+		//regcache_size = 17*8; //register_cache_size (context_regcache->tdesc);
+
+		//fprintf(stdout, "Want to collect all %d registers", regcache_size);
+		/* Collect all registers for now.  */
+		//regspace = add_traceframe_block (tframe, tpoint, 1 + regcache_size);
+		//if (regspace == NULL)
+		//{
+		//	trace_debug ("Trace buffer block allocation failed, skipping");
+		//	break;
+		//}
+		/* Identify a register block.  */
+		//*regspace = 'R';
+
+		/* Wrap the regblock in a register cache (in the stack, we
+	   don't want to malloc here).  */
+		//init_register_cache (&tregcache, context_regcache->tdesc,
+		//regspace + 1);
+
+		/* Copy the register data to the regblock.  */
+		//regcache_cpy (&tregcache, context_regcache);
+
+		tracepoint(gdb_trace, amd64_registers,
+				(uint64_t) context_regcache->registers,
+				(uint64_t) ((char*)context_regcache->registers)+8,
+				(uint64_t) ((char*)context_regcache->registers)+16,
+				(uint64_t) ((char*)context_regcache->registers)+24
+				);
+
+#ifndef IN_PROCESS_AGENT
+		/* On some platforms, trap-based tracepoints will have the PC
+	   pointing to the next instruction after the trap, but we
+	   don't want the user or GDB trying to guess whether the
+	   saved PC needs adjusting; so always record the adjusted
+	   stop_pc.  Note that we can't use tpoint->address instead,
+	   since it will be wrong for while-stepping actions.  This
+	   adjustment is a nop for fast tracepoints collected from the
+	   in-process lib (but not if GDBserver is collecting one
+	   preemptively), since the PC had already been adjusted to
+	   contain the tracepoint's address by the jump pad.  */
+		trace_debug ("Storing stop pc (0x%s) in regblock",
+				paddress (stop_pc));
+
+		/* This changes the regblock, not the thread's
+	   regcache.  */
+		//regcache_write_pc (&tregcache, stop_pc);
+#endif
+	}
+	break;
+	case 'X':
+	{
+		/*
+		struct eval_expr_action *eaction;
+		struct eval_agent_expr_context ax_ctx;
+
+		eaction = (struct eval_expr_action *) taction;
+		ax_ctx.regcache = get_context_regcache (ctx);
+		ax_ctx.tframe = tframe;
+		ax_ctx.tpoint = tpoint;
+
+		trace_debug ("Want to evaluate expression");
+
+		err = gdb_eval_agent_expr (&ax_ctx, eaction->expr, NULL);
+
+		if (err != expr_eval_no_error)
+		{
+			record_tracepoint_error (tpoint, "action expression", err);
+			return;
+		}
+		*/
+	}
+	break;
+	case 'L':
+	{
+		/*
+
+#if defined IN_PROCESS_AGENT && defined HAVE_UST
+		trace_debug ("Want to collect static trace data");
+		collect_ust_data_at_tracepoint (ctx, tframe);
+#else
+		trace_debug ("warning: collecting static trace data, "
+				"but static tracepoints are not supported");
+#endif
+*/
+	}
+	break;
+	default:
+		trace_debug ("unknown trace action '%c', ignoring", taction->type);
+		break;
+	}
 }
 
 static int
@@ -5932,6 +6131,73 @@ gdb_collect (struct tracepoint *tpoint, unsigned char *regs)
 					   ctx.tpoint))
 	{
 	  collect_data_at_tracepoint ((struct tracepoint_hit_ctx *) &ctx,
+				      ctx.tpoint->address, ctx.tpoint);
+
+	  /* Note that this will cause original insns to be written back
+	     to where we jumped from, but that's OK because we're jumping
+	     back to the next whole instruction.  This will go badly if
+	     instruction restoration is not atomic though.  */
+	  if (stopping_tracepoint
+	      || trace_buffer_is_full
+	      || expr_eval_result != expr_eval_no_error)
+	    {
+	      stop_tracing ();
+	      break;
+	    }
+	}
+      else
+	{
+	  /* If there was a condition and it evaluated to false, the only
+	     way we would stop tracing is if there was an error during
+	     condition expression evaluation.  */
+	  if (expr_eval_result != expr_eval_no_error)
+	    {
+	      stop_tracing ();
+	      break;
+	    }
+	}
+    }
+}
+
+IP_AGENT_EXPORT_FUNC void
+lttng_collect (struct tracepoint *tpoint, unsigned char *regs)
+{
+  struct fast_tracepoint_ctx ctx;
+
+  /* Don't do anything until the trace run is completely set up.  */
+  if (!tracing)
+    return;
+
+  ctx.base.type = fast_tracepoint;
+  ctx.regs = regs;
+  ctx.regcache_initted = 0;
+  /* Wrap the regblock in a register cache (in the stack, we don't
+     want to malloc here).  */
+  ctx.regspace = (unsigned char *) alloca (ipa_tdesc->registers_size);
+  if (ctx.regspace == NULL)
+    {
+      trace_debug ("Trace buffer block allocation failed, skipping");
+      return;
+    }
+
+  for (ctx.tpoint = tpoint;
+       ctx.tpoint != NULL && ctx.tpoint->address == tpoint->address;
+       ctx.tpoint = ctx.tpoint->next)
+    {
+      if (!ctx.tpoint->enabled)
+	continue;
+
+      /* Multiple tracepoints of different types, such as fast tracepoint and
+	 static tracepoint, can be set at the same address.  */
+      if (ctx.tpoint->type != tpoint->type)
+	continue;
+
+      /* Test the condition if present, and collect if true.  */
+      if (ctx.tpoint->cond == NULL
+	  || condition_true_at_tracepoint ((struct tracepoint_hit_ctx *) &ctx,
+					   ctx.tpoint))
+	{
+	  collect_data_at_lttng_tracepoint ((struct tracepoint_hit_ctx *) &ctx,
 				      ctx.tpoint->address, ctx.tpoint);
 
 	  /* Note that this will cause original insns to be written back
