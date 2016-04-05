@@ -924,12 +924,14 @@ ax_printf (CORE_ADDR fn, CORE_ADDR chan, const char *format,
 
 /* The agent expression evaluator, as specified by the GDB docs. It
    returns 0 if everything went OK, and a nonzero error code
-   otherwise.  */
+   otherwise. If buf is non-null, it will copy the data into the buffer instead
+   of a traceframe. */
 
 enum eval_result_type
 gdb_eval_agent_expr (struct eval_agent_expr_context *ctx,
 		     struct agent_expr *aexpr,
-		     ULONGEST *rslt)
+		     ULONGEST *rslt,
+			 unsigned char * buf)
 {
   int pc = 0;
 #define STACK_MAX 100
@@ -1046,7 +1048,7 @@ gdb_eval_agent_expr (struct eval_agent_expr_context *ctx,
 	  break;
 
 	case gdb_agent_op_trace:
-	  agent_mem_read (ctx, NULL, (CORE_ADDR) stack[--sp],
+	  agent_mem_read (ctx, buf, (CORE_ADDR) stack[--sp],
 			  (ULONGEST) top);
 	  if (--sp >= 0)
 	    top = stack[sp];
@@ -1054,7 +1056,7 @@ gdb_eval_agent_expr (struct eval_agent_expr_context *ctx,
 
 	case gdb_agent_op_trace_quick:
 	  arg = aexpr->bytes[pc++];
-	  agent_mem_read (ctx, NULL, (CORE_ADDR) top, (ULONGEST) arg);
+	  agent_mem_read (ctx, buf, (CORE_ADDR) top, (ULONGEST) arg);
 	  break;
 
 	case gdb_agent_op_log_not:
@@ -1358,4 +1360,453 @@ gdb_eval_agent_expr (struct eval_agent_expr_context *ctx,
       ax_debug ("Op %s -> sp=%d, top=0x%s",
 		gdb_agent_op_name (op), sp, phex_nz (top, 0));
     }
+}
+
+enum eval_result_type
+gdb_eval_size_agent_expr (const struct target_desc * tdesc,
+		struct agent_expr *aexpr,
+		ULONGEST *rslt, int * size)
+{
+	int pc = 0;
+	ULONGEST stack[STACK_MAX], top;
+	int sp = 0;
+	unsigned char op;
+	int arg;
+	struct eval_agent_expr_context *ctx = 0;
+
+	/* This union is a convenient way to convert representations.  For
+     now, assume a standard architecture where the hardware integer
+     types have 8, 16, 32, 64 bit types.  A more robust solution would
+     be to import stdint.h from gnulib.  */
+	union
+	{
+		union
+		{
+			unsigned char bytes[1];
+			unsigned char val;
+		} u8;
+		union
+		{
+			unsigned char bytes[2];
+			unsigned short val;
+		} u16;
+		union
+		{
+			unsigned char bytes[4];
+			unsigned int val;
+		} u32;
+		union
+		{
+			unsigned char bytes[8];
+			ULONGEST val;
+		} u64;
+	} cnv;
+
+	if (aexpr->length == 0)
+	{
+		ax_debug ("empty agent expression");
+		return expr_eval_empty_expression;
+	}
+
+	/* Cache the stack top in its own variable. Much of the time we can
+     operate on this variable, rather than dinking with the stack. It
+     needs to be copied to the stack when sp changes.  */
+	top = 0;
+	*size = 0;
+
+	while (1)
+	{
+		op = aexpr->bytes[pc++];
+
+		ax_debug ("About to interpret byte 0x%x", op);
+
+		switch (op)
+		{
+		case gdb_agent_op_add:
+			top += stack[--sp];
+			break;
+
+		case gdb_agent_op_sub:
+			top = stack[--sp] - top;
+			break;
+
+		case gdb_agent_op_mul:
+			top *= stack[--sp];
+			break;
+
+		case gdb_agent_op_div_signed:
+			if (top == 0)
+			{
+				ax_debug ("Attempted to divide by zero");
+				return expr_eval_divide_by_zero;
+			}
+			top = ((LONGEST) stack[--sp]) / ((LONGEST) top);
+			break;
+
+		case gdb_agent_op_div_unsigned:
+			if (top == 0)
+			{
+				ax_debug ("Attempted to divide by zero");
+				return expr_eval_divide_by_zero;
+			}
+			top = stack[--sp] / top;
+			break;
+		case gdb_agent_op_rem_signed:
+			if (top == 0)
+			{
+				ax_debug ("Attempted to divide by zero");
+				return expr_eval_divide_by_zero;
+			}
+			top = ((LONGEST) stack[--sp]) % ((LONGEST) top);
+			break;
+
+		case gdb_agent_op_rem_unsigned:
+			if (top == 0)
+			{
+				ax_debug ("Attempted to divide by zero");
+				return expr_eval_divide_by_zero;
+			}
+			top = stack[--sp] % top;
+			break;
+
+		case gdb_agent_op_lsh:
+			top = stack[--sp] << top;
+			break;
+
+		case gdb_agent_op_rsh_signed:
+			top = ((LONGEST) stack[--sp]) >> top;
+			break;
+
+		case gdb_agent_op_rsh_unsigned:
+			top = stack[--sp] >> top;
+			break;
+
+		case gdb_agent_op_trace:
+			//agent_mem_read (ctx, NULL, (CORE_ADDR) stack[--sp],(ULONGEST) top);
+			sp--;
+			*size += top;
+			if (--sp >= 0)
+				top = stack[sp];
+			break;
+
+		case gdb_agent_op_trace_quick:
+			arg = aexpr->bytes[pc++];
+			//agent_mem_read (ctx, NULL, (CORE_ADDR) top, (ULONGEST) arg);
+			*size += arg;
+			break;
+
+		case gdb_agent_op_log_not:
+			top = !top;
+			break;
+
+		case gdb_agent_op_bit_and:
+			top &= stack[--sp];
+			break;
+
+		case gdb_agent_op_bit_or:
+			top |= stack[--sp];
+			break;
+
+		case gdb_agent_op_bit_xor:
+			top ^= stack[--sp];
+			break;
+
+		case gdb_agent_op_bit_not:
+			top = ~top;
+			break;
+
+		case gdb_agent_op_equal:
+			top = (stack[--sp] == top);
+			break;
+
+		case gdb_agent_op_less_signed:
+			top = (((LONGEST) stack[--sp]) < ((LONGEST) top));
+			break;
+
+		case gdb_agent_op_less_unsigned:
+			top = (stack[--sp] < top);
+			break;
+
+		case gdb_agent_op_ext:
+			arg = aexpr->bytes[pc++];
+			if (arg < (sizeof (LONGEST) * 8))
+			{
+				LONGEST mask = 1 << (arg - 1);
+				top &= ((LONGEST) 1 << arg) - 1;
+				top = (top ^ mask) - mask;
+			}
+			break;
+
+		case gdb_agent_op_ref8:
+			agent_mem_read (ctx, cnv.u8.bytes, (CORE_ADDR) top, 1);
+			top = cnv.u8.val;
+			break;
+
+		case gdb_agent_op_ref16:
+			agent_mem_read (ctx, cnv.u16.bytes, (CORE_ADDR) top, 2);
+			top = cnv.u16.val;
+			break;
+
+		case gdb_agent_op_ref32:
+			agent_mem_read (ctx, cnv.u32.bytes, (CORE_ADDR) top, 4);
+			top = cnv.u32.val;
+			break;
+
+		case gdb_agent_op_ref64:
+			agent_mem_read (ctx, cnv.u64.bytes, (CORE_ADDR) top, 8);
+			top = cnv.u64.val;
+			break;
+
+		case gdb_agent_op_if_goto:
+			if (top)
+				pc = (aexpr->bytes[pc] << 8) + (aexpr->bytes[pc + 1]);
+			else
+				pc += 2;
+			if (--sp >= 0)
+				top = stack[sp];
+			break;
+
+		case gdb_agent_op_goto:
+			pc = (aexpr->bytes[pc] << 8) + (aexpr->bytes[pc + 1]);
+			break;
+
+		case gdb_agent_op_const8:
+			/* Flush the cached stack top.  */
+			stack[sp++] = top;
+			top = aexpr->bytes[pc++];
+			break;
+
+		case gdb_agent_op_const16:
+			/* Flush the cached stack top.  */
+			stack[sp++] = top;
+			top = aexpr->bytes[pc++];
+			top = (top << 8) + aexpr->bytes[pc++];
+			break;
+
+		case gdb_agent_op_const32:
+			/* Flush the cached stack top.  */
+			stack[sp++] = top;
+			top = aexpr->bytes[pc++];
+			top = (top << 8) + aexpr->bytes[pc++];
+			top = (top << 8) + aexpr->bytes[pc++];
+			top = (top << 8) + aexpr->bytes[pc++];
+			break;
+
+		case gdb_agent_op_const64:
+			/* Flush the cached stack top.  */
+			stack[sp++] = top;
+			top = aexpr->bytes[pc++];
+			top = (top << 8) + aexpr->bytes[pc++];
+			top = (top << 8) + aexpr->bytes[pc++];
+			top = (top << 8) + aexpr->bytes[pc++];
+			top = (top << 8) + aexpr->bytes[pc++];
+			top = (top << 8) + aexpr->bytes[pc++];
+			top = (top << 8) + aexpr->bytes[pc++];
+			top = (top << 8) + aexpr->bytes[pc++];
+			break;
+
+		case gdb_agent_op_reg:
+			/* Flush the cached stack top.  */
+			stack[sp++] = top;
+			arg = aexpr->bytes[pc++];
+			arg = (arg << 8) + aexpr->bytes[pc++];
+			{
+				int regnum = arg;
+
+				switch (register_size (tdesc, regnum))
+				{
+				case 8:
+					//collect_register (regcache, regnum, cnv.u64.bytes);
+					// Put 0s and 1 as the value
+					memset(cnv.u64.bytes, 0, 7);
+					memset(&cnv.u64.bytes[7], 1, 1);
+					top = cnv.u64.val;
+					break;
+				case 4:
+					//collect_register (regcache, regnum, cnv.u32.bytes);
+					memset(cnv.u64.bytes, 0, 3);
+					memset(&cnv.u64.bytes[3], 1, 1);
+					top = cnv.u32.val;
+					break;
+				case 2:
+					//collect_register (regcache, regnum, cnv.u16.bytes);
+					memset(cnv.u64.bytes, 0, 1);
+					memset(&cnv.u64.bytes[1], 1, 1);
+					top = cnv.u16.val;
+					break;
+				case 1:
+					//collect_register (regcache, regnum, cnv.u8.bytes);
+					memset(cnv.u64.bytes, 1, 1);
+					top = cnv.u8.val;
+					break;
+				default:
+					internal_error (__FILE__, __LINE__,
+							"unhandled register size");
+				}
+			}
+			break;
+
+		case gdb_agent_op_end:
+			ax_debug ("At end of expression, sp=%d, stack top cache=0x%s",sp, pulongest (top));
+			/*
+			if (rslt)
+			{
+				if (sp <= 0)
+				{
+					 This should be an error
+					ax_debug ("Stack is empty, nothing to return");
+					return expr_eval_empty_stack;
+				}
+				*rslt = top;
+			}
+			*/
+			return expr_eval_no_error;
+
+		case gdb_agent_op_dup:
+			stack[sp++] = top;
+			break;
+
+		case gdb_agent_op_pop:
+			if (--sp >= 0)
+				top = stack[sp];
+			break;
+
+		case gdb_agent_op_pick:
+			arg = aexpr->bytes[pc++];
+			stack[sp] = top;
+			top = stack[sp - arg];
+			++sp;
+			break;
+
+		case gdb_agent_op_rot:
+		{
+			ULONGEST tem = stack[sp - 1];
+
+			stack[sp - 1] = stack[sp - 2];
+			stack[sp - 2] = top;
+			top = tem;
+		}
+		break;
+
+		case gdb_agent_op_zero_ext:
+			arg = aexpr->bytes[pc++];
+			if (arg < (sizeof (LONGEST) * 8))
+				top &= ((LONGEST) 1 << arg) - 1;
+			break;
+
+		case gdb_agent_op_swap:
+			/* Interchange top two stack elements, making sure top gets
+	     copied back onto stack.  */
+			stack[sp] = top;
+			top = stack[sp - 1];
+			stack[sp - 1] = stack[sp];
+			break;
+
+		case gdb_agent_op_getv:
+			/* Flush the cached stack top.  */
+			stack[sp++] = top;
+			arg = aexpr->bytes[pc++];
+			arg = (arg << 8) + aexpr->bytes[pc++];
+			top = 0; //agent_get_trace_state_variable_value (arg);
+			break;
+
+		case gdb_agent_op_setv:
+			arg = aexpr->bytes[pc++];
+			arg = (arg << 8) + aexpr->bytes[pc++];
+			//agent_set_trace_state_variable_value (arg, top);
+			/* Note that we leave the value on the stack, for the
+	     benefit of later/enclosing expressions.  */
+			break;
+
+		case gdb_agent_op_tracev:
+			arg = aexpr->bytes[pc++];
+			arg = (arg << 8) + aexpr->bytes[pc++];
+			//agent_tsv_read (ctx, arg);
+			// For now, trace state variable won't be recorded using lttng tracepoints
+			break;
+
+		case gdb_agent_op_tracenz:
+			//agent_mem_read_string (ctx, NULL, (CORE_ADDR) stack[--sp],
+			//		(ULONGEST) top);
+			// Reading string is not implemented yet
+			sp--;
+			if (--sp >= 0)
+				top = stack[sp];
+			break;
+
+		case gdb_agent_op_printf:
+		{
+			/*
+			int nargs, slen, i;
+			CORE_ADDR fn = 0, chan = 0;
+			 Can't have more args than the entire size of the stack.
+			ULONGEST args[STACK_MAX];
+			char *format;
+
+			nargs = aexpr->bytes[pc++];
+			slen = aexpr->bytes[pc++];
+			slen = (slen << 8) + aexpr->bytes[pc++];
+			format = (char *) &(aexpr->bytes[pc]);
+			pc += slen;
+			 Pop function and channel.
+			fn = top;
+			if (--sp >= 0)
+				top = stack[sp];
+			chan = top;
+			if (--sp >= 0)
+				top = stack[sp];
+			 Pop arguments into a dedicated array.
+			for (i = 0; i < nargs; ++i)
+			{
+				args[i] = top;
+				if (--sp >= 0)
+					top = stack[sp];
+			}
+
+			 A bad format string means something is very wrong; give
+	       up immediately.
+			if (format[slen - 1] != '\0')
+				error (_("Unterminated format string in printf bytecode"));
+
+			ax_printf (fn, chan, format, nargs, args);
+			*/
+		}
+		break;
+
+		/* GDB never (currently) generates any of these ops.  */
+		case gdb_agent_op_float:
+		case gdb_agent_op_ref_float:
+		case gdb_agent_op_ref_double:
+		case gdb_agent_op_ref_long_double:
+		case gdb_agent_op_l_to_d:
+		case gdb_agent_op_d_to_l:
+		case gdb_agent_op_trace16:
+			//ax_debug ("Agent expression op 0x%x valid, but not handled",
+			//		op);
+			/* If ever GDB generates any of these, we don't have the
+	     option of ignoring.  */
+			return expr_eval_unhandled_opcode;
+
+		default:
+			ax_debug ("Agent expression op 0x%x not recognized", op);
+			/* Don't struggle on, things will just get worse.  */
+			return expr_eval_unrecognized_opcode;
+		}
+
+		/* Check for stack badness.  */
+		if (sp >= (STACK_MAX - 1))
+		{
+			ax_debug ("Expression stack overflow");
+			return expr_eval_stack_overflow;
+		}
+
+		if (sp < 0)
+		{
+			ax_debug ("Expression stack underflow");
+			return expr_eval_stack_underflow;
+		}
+
+		//ax_debug ("Op %s -> sp=%d, top=0x%s",
+		//		gdb_agent_op_name (op), sp, phex_nz (top, 0));
+	}
 }

@@ -84,7 +84,13 @@ struct eval_agent_expr_context
 enum eval_result_type
   gdb_eval_agent_expr (struct eval_agent_expr_context *ctx,
 		       struct agent_expr *aexpr,
-		       ULONGEST *rslt);
+		       ULONGEST *rslt,
+			   unsigned char * buf);
+
+enum eval_result_type
+  gdb_eval_size_agent_expr(const struct target_desc * tdesc,
+			struct agent_expr *aexpr,
+			ULONGEST *rslt, int * size);
 
 /* Bytecode compilation function vector.  */
 

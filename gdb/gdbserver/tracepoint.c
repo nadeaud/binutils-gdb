@@ -33,10 +33,12 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+#ifdef IN_PROCESS_AGENT
 #include "lttng-collect.h"
+#endif
 
 //#undef IN_PROCESS_AGENT
-#define IN_PROCESS_AGENT
+//#define IN_PROCESS_AGENT
 
 #define DEFAULT_TRACE_BUFFER_SIZE 5242880 /* 5*1024*1024 */
 
@@ -5027,7 +5029,7 @@ do_action_at_tracepoint (struct tracepoint_hit_ctx *ctx,
 
 		trace_debug ("Want to evaluate expression");
 
-		err = gdb_eval_agent_expr (&ax_ctx, eaction->expr, NULL);
+		err = gdb_eval_agent_expr (&ax_ctx, eaction->expr, NULL, NULL);
 
 		if (err != expr_eval_no_error)
 		{
@@ -5080,7 +5082,7 @@ do_action_at_lttng_tracepoint (struct tracepoint_hit_ctx *ctx,
 				paddress (maction->addr), maction->basereg);
 		fprintf(stdout, "Want to collect %s bytes at 0x%s (basereg %d)", pulongest (maction->len),
 				paddress (maction->addr), maction->basereg);
-		/* (should use basereg)
+		 (should use basereg)
 		agent_mem_read (&ax_ctx, NULL, (CORE_ADDR) maction->addr,
 				maction->len);
 		 */
@@ -5116,14 +5118,14 @@ do_action_at_lttng_tracepoint (struct tracepoint_hit_ctx *ctx,
 
 		/* Copy the register data to the regblock.  */
 		//regcache_cpy (&tregcache, context_regcache);
-
+#ifdef IN_PROCESS_AGENT
 		tracepoint(gdb_trace, amd64_registers,
 				(uint64_t) context_regcache->registers,
 				(uint64_t) ((char*)context_regcache->registers)+8,
 				(uint64_t) ((char*)context_regcache->registers)+16,
 				(uint64_t) ((char*)context_regcache->registers)+24
 				);
-
+#endif
 #ifndef IN_PROCESS_AGENT
 		/* On some platforms, trap-based tracepoints will have the PC
 	   pointing to the next instruction after the trap, but we
@@ -5223,7 +5225,7 @@ condition_true_at_tracepoint (struct tracepoint_hit_ctx *ctx,
       ax_ctx.tframe = NULL;
       ax_ctx.tpoint = tpoint;
 
-      err = gdb_eval_agent_expr (&ax_ctx, tpoint->cond, &value);
+      err = gdb_eval_agent_expr (&ax_ctx, tpoint->cond, &value, NULL);
     }
   if (err != expr_eval_no_error)
     {
