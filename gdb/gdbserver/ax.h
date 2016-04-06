@@ -85,7 +85,8 @@ enum eval_result_type
   gdb_eval_agent_expr (struct eval_agent_expr_context *ctx,
 		       struct agent_expr *aexpr,
 		       ULONGEST *rslt,
-			   unsigned char * buf);
+			   unsigned char * buf,
+			   int * new_index);
 
 enum eval_result_type
   gdb_eval_size_agent_expr(const struct target_desc * tdesc,

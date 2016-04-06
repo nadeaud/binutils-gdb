@@ -1250,7 +1250,7 @@ gdb_condition_true_at_breakpoint_z_type (char z_type, CORE_ADDR addr)
        cl && !value && !err; cl = cl->next)
     {
       /* Evaluate the condition.  */
-      err = gdb_eval_agent_expr (&ctx, cl->cond, &value, NULL);
+      err = gdb_eval_agent_expr (&ctx, cl->cond, &value, NULL, NULL);
     }
 
   if (err)
@@ -1369,7 +1369,7 @@ run_breakpoint_commands_z_type (char z_type, CORE_ADDR addr)
        cl && !value && !err; cl = cl->next)
     {
       /* Run the command.  */
-      err = gdb_eval_agent_expr (&ctx, cl->cmd, &value, NULL);
+      err = gdb_eval_agent_expr (&ctx, cl->cmd, &value, NULL, NULL);
 
       /* If one command has a problem, stop digging the hole deeper.  */
       if (err)

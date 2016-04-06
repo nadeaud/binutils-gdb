@@ -931,7 +931,8 @@ enum eval_result_type
 gdb_eval_agent_expr (struct eval_agent_expr_context *ctx,
 		     struct agent_expr *aexpr,
 		     ULONGEST *rslt,
-			 unsigned char * buf)
+			 unsigned char * buf,
+			 int * new_index)
 {
   int pc = 0;
 #define STACK_MAX 100
@@ -1050,6 +1051,12 @@ gdb_eval_agent_expr (struct eval_agent_expr_context *ctx,
 	case gdb_agent_op_trace:
 	  agent_mem_read (ctx, buf, (CORE_ADDR) stack[--sp],
 			  (ULONGEST) top);
+	  if(buf != NULL)
+	  {
+		  /* Increment the buffer and the index. */
+		  buf += top;
+		  *new_index += top;
+	  }
 	  if (--sp >= 0)
 	    top = stack[sp];
 	  break;
@@ -1057,7 +1064,13 @@ gdb_eval_agent_expr (struct eval_agent_expr_context *ctx,
 	case gdb_agent_op_trace_quick:
 	  arg = aexpr->bytes[pc++];
 	  agent_mem_read (ctx, buf, (CORE_ADDR) top, (ULONGEST) arg);
-	  break;
+	  if(buf != NULL)
+	  {
+		  /* Increment the buffer and the index. */
+		  buf += arg;
+		  *new_index += arg;
+	  }
+	   break;
 
 	case gdb_agent_op_log_not:
 	  top = !top;

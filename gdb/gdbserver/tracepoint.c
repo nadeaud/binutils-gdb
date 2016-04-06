@@ -33,6 +33,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+#include "lttng-functions.h"
+
 #ifdef IN_PROCESS_AGENT
 #include "lttng-collect.h"
 #endif
@@ -1403,8 +1405,9 @@ static void do_action_at_tracepoint (struct tracepoint_hit_ctx *ctx,
 static void do_action_at_lttng_tracepoint (struct tracepoint_hit_ctx *ctx,
 				     CORE_ADDR stop_pc,
 				     struct tracepoint *tpoint,
-				     struct traceframe *tframe,
-				     struct tracepoint_action *taction);
+				     struct tracepoint_action *taction,
+					 unsigned char * buf,
+					 int * new_index);
 
 #ifndef IN_PROCESS_AGENT
 static struct tracepoint *fast_tracepoint_from_ipa_tpoint_address (CORE_ADDR);
@@ -3103,12 +3106,87 @@ clone_fast_tracepoint (struct tracepoint *to, const struct tracepoint *from)
    non-zero.  */
 
 static int
+size_action_at_tracepoint (struct tracepoint *tpoint,
+			 struct tracepoint_action *taction)
+{
+	enum eval_result_type err;
+
+	switch (taction->type)
+	{
+	case 'M':
+	{
+		struct collect_memory_action *maction;
+
+		maction = (struct collect_memory_action *) taction;
+
+		return maction->len;
+	}
+	case 'R':
+	{
+		// This is straighfoward as a specific tracepoint is made to collect all tracepoint
+	}
+	break;
+	case 'X':
+	{
+		struct eval_expr_action *eaction;
+		struct eval_agent_expr_context ax_ctx;
+		const struct target_desc * tdesc;
+		int size = 0;
+
+		eaction = (struct eval_expr_action *) taction;
+
+		tdesc = current_target_desc();
+
+		err = gdb_eval_size_agent_expr (tdesc, eaction->expr, NULL, &size);
+
+		if (err != expr_eval_no_error)
+		{
+			record_tracepoint_error (tpoint, "action expression", err);
+			return -1;
+		}
+		return size;
+	}
+	break;
+	case 'L':
+	{
+	}
+	break;
+	default:
+		trace_debug ("unknown trace action '%c', ignoring", taction->type);
+		break;
+	}
+	return 0;
+}
+
+int eval_size_traceframe(struct tracepoint * tpoint)
+{
+	int nb_bytes = 0;
+	int acti;
+	struct tracepoint_hit_ctx *ctx;
+	for(acti = 0; acti < tpoint->numactions; ++acti)
+	{
+		int val = size_action_at_tracepoint(tpoint,tpoint->actions[acti]);
+		if(val >= 0)
+		{
+			nb_bytes += val;
+		}
+		else
+		{
+			return -1;
+		}
+	}
+	return nb_bytes;
+}
+
+static int
 install_fast_tracepoint (struct tracepoint *tpoint, char *errbuf)
 {
   CORE_ADDR jentry, jump_entry;
   CORE_ADDR trampoline;
   ULONGEST trampoline_size;
   int err = 0;
+  int lttng_collector;
+  int trace_size;
   /* The jump to the jump pad of the last fast tracepoint
      installed.  */
   unsigned char fjump[MAX_JUMP_SIZE];
@@ -3126,6 +3204,16 @@ install_fast_tracepoint (struct tracepoint *tpoint, char *errbuf)
   trampoline = 0;
   trampoline_size = 0;
 
+  trace_size = eval_size_traceframe(tpoint);
+
+  if(trace_size < 0)
+	  return 1;
+
+  lttng_collector = get_lttng_trace_function(trace_size);
+
+  if(lttng_collector < 0)
+	  return 1;
+
   /* Install the jump pad.  */
   err = install_fast_tracepoint_jump_pad (tpoint->obj_addr_on_target,
 					  tpoint->address,
@@ -3137,7 +3225,8 @@ install_fast_tracepoint (struct tracepoint *tpoint, char *errbuf)
 					  fjump, &fjump_size,
 					  &tpoint->adjusted_insn_addr,
 					  &tpoint->adjusted_insn_addr_end,
-					  errbuf);
+					  errbuf,
+					  lttng_collector);
 
   if (err)
     return 1;
@@ -4791,7 +4880,7 @@ collect_data_at_tracepoint (struct tracepoint_hit_ctx *ctx, CORE_ADDR stop_pc,
 }
 
 static void
-collect_data_at_lttng_tracepoint (struct tracepoint_hit_ctx *ctx, CORE_ADDR stop_pc,
+collect_data_at_lttng_tracepoint_old (struct tracepoint_hit_ctx *ctx, CORE_ADDR stop_pc,
 			    struct tracepoint *tpoint)
 {
   struct traceframe *tframe;
@@ -4825,7 +4914,7 @@ collect_data_at_lttng_tracepoint (struct tracepoint_hit_ctx *ctx, CORE_ADDR stop
 		       tpoint->actions_str[acti]);
 #endif
 
-	  do_action_at_lttng_tracepoint (ctx, stop_pc, tpoint, tframe,
+	  do_action_at_tracepoint (ctx, stop_pc, tpoint, tframe,
 				   tpoint->actions[acti]);
 	  //printf("%c \n", tpoint->actions[acti]->type);
 	}
@@ -5029,7 +5118,7 @@ do_action_at_tracepoint (struct tracepoint_hit_ctx *ctx,
 
 		trace_debug ("Want to evaluate expression");
 
-		err = gdb_eval_agent_expr (&ax_ctx, eaction->expr, NULL, NULL);
+		err = gdb_eval_agent_expr (&ax_ctx, eaction->expr, NULL, NULL, NULL);
 
 		if (err != expr_eval_no_error)
 		{
@@ -5059,8 +5148,9 @@ static void
 do_action_at_lttng_tracepoint (struct tracepoint_hit_ctx *ctx,
 			 CORE_ADDR stop_pc,
 			 struct tracepoint *tpoint,
-			 struct traceframe *tframe,
-			 struct tracepoint_action *taction)
+			 struct tracepoint_action *taction,
+			 unsigned char * buf,
+			 int * index)
 {
 	enum eval_result_type err;
 
@@ -5068,24 +5158,20 @@ do_action_at_lttng_tracepoint (struct tracepoint_hit_ctx *ctx,
 	{
 	case 'M':
 	{
-		/*
+
 		struct collect_memory_action *maction;
 		struct eval_agent_expr_context ax_ctx;
 
 		maction = (struct collect_memory_action *) taction;
-		ax_ctx.regcache = NULL;
-		ax_ctx.tframe = tframe;
-		ax_ctx.tpoint = tpoint;
 
 		trace_debug ("Want to collect %s bytes at 0x%s (basereg %d)",
 				pulongest (maction->len),
 				paddress (maction->addr), maction->basereg);
-		fprintf(stdout, "Want to collect %s bytes at 0x%s (basereg %d)", pulongest (maction->len),
-				paddress (maction->addr), maction->basereg);
-		 (should use basereg)
-		agent_mem_read (&ax_ctx, NULL, (CORE_ADDR) maction->addr,
+		/* (should use basereg)*/
+		agent_mem_read (&ax_ctx, &buf[*index], (CORE_ADDR) maction->addr,
 				maction->len);
-		 */
+		*index += maction->len;
+
 		break;
 	}
 	case 'R':
@@ -5098,27 +5184,10 @@ do_action_at_lttng_tracepoint (struct tracepoint_hit_ctx *ctx,
 		trace_debug ("Want to collect registers");
 		context_regcache = get_context_regcache (ctx);
 		// As a demo, only collect 17 registers (rax to rip)
-		//regcache_size = 17*8; //register_cache_size (context_regcache->tdesc);
-
-		//fprintf(stdout, "Want to collect all %d registers", regcache_size);
-		/* Collect all registers for now.  */
-		//regspace = add_traceframe_block (tframe, tpoint, 1 + regcache_size);
-		//if (regspace == NULL)
-		//{
-		//	trace_debug ("Trace buffer block allocation failed, skipping");
-		//	break;
-		//}
-		/* Identify a register block.  */
-		//*regspace = 'R';
-
-		/* Wrap the regblock in a register cache (in the stack, we
-	   don't want to malloc here).  */
-		//init_register_cache (&tregcache, context_regcache->tdesc,
-		//regspace + 1);
-
-		/* Copy the register data to the regblock.  */
-		//regcache_cpy (&tregcache, context_regcache);
 #ifdef IN_PROCESS_AGENT
+		/* If this is defined for gdbserver, there will be a duplicate registration
+		 * of this tracepoint, causing the program to fail.
+		 */
 		tracepoint(gdb_trace, amd64_registers,
 				(uint64_t) context_regcache->registers,
 				(uint64_t) ((char*)context_regcache->registers)+8,
@@ -5148,25 +5217,24 @@ do_action_at_lttng_tracepoint (struct tracepoint_hit_ctx *ctx,
 	break;
 	case 'X':
 	{
-		/*
+
 		struct eval_expr_action *eaction;
 		struct eval_agent_expr_context ax_ctx;
 
 		eaction = (struct eval_expr_action *) taction;
 		ax_ctx.regcache = get_context_regcache (ctx);
-		ax_ctx.tframe = tframe;
 		ax_ctx.tpoint = tpoint;
 
 		trace_debug ("Want to evaluate expression");
 
-		err = gdb_eval_agent_expr (&ax_ctx, eaction->expr, NULL);
+		err = gdb_eval_agent_expr (&ax_ctx, eaction->expr, NULL, buf, index);
 
 		if (err != expr_eval_no_error)
 		{
 			record_tracepoint_error (tpoint, "action expression", err);
 			return;
 		}
-		*/
+
 	}
 	break;
 	case 'L':
@@ -5225,7 +5293,7 @@ condition_true_at_tracepoint (struct tracepoint_hit_ctx *ctx,
       ax_ctx.tframe = NULL;
       ax_ctx.tpoint = tpoint;
 
-      err = gdb_eval_agent_expr (&ax_ctx, tpoint->cond, &value, NULL);
+      err = gdb_eval_agent_expr (&ax_ctx, tpoint->cond, &value, NULL, NULL);
     }
   if (err != expr_eval_no_error)
     {
@@ -6090,12 +6158,64 @@ EXTERN_C_PUSH
 IP_AGENT_EXPORT_VAR collecting_t *collecting;
 EXTERN_C_POP
 
+typedef void (*lttng_collect_fcnt)(struct tracepoint_hit_ctx *ctx, CORE_ADDR stop_pc, struct tracepoint *tpoint);
+
+void trace_8bytes(struct tracepoint_hit_ctx *ctx, CORE_ADDR stop_pc, struct tracepoint *tpoint)
+{
+	unsigned char buf[8];
+	int acti, index=0;
+
+	for (acti = 0; acti < tpoint->numactions; ++acti)
+	{
+		do_action_at_lttng_tracepoint (ctx, stop_pc, tpoint,tpoint->actions[acti], &buf[index], &index);
+	}
+	tracepoint(gdb_trace, lttng_8bytes, buf);
+}
+
+void trace_16bytes(struct tracepoint_hit_ctx *ctx, CORE_ADDR stop_pc, struct tracepoint *tpoint)
+{
+	unsigned char buf[16];
+	int acti, i, index=0;
+	for (acti = 0; acti < tpoint->numactions; ++acti)
+	{
+		do_action_at_lttng_tracepoint (ctx, stop_pc, tpoint,tpoint->actions[acti], &buf[index], &index);
+	}
+	tracepoint(gdb_trace, lttng_16bytes, buf);
+}
+
+void trace_24bytes(struct tracepoint_hit_ctx *ctx, CORE_ADDR stop_pc, struct tracepoint *tpoint)
+{
+	unsigned char buf[24];
+	int acti, index=0;
+
+	for (acti = 0; acti < tpoint->numactions; ++acti)
+	{
+		do_action_at_lttng_tracepoint (ctx, stop_pc, tpoint,tpoint->actions[acti], &buf[index], &index);
+	}
+	tracepoint(gdb_trace, lttng_24bytes, buf);
+}
+
+lttng_collect_fcnt collect_functions[3] = {
+		&trace_8bytes,
+		&trace_16bytes,
+		&trace_24bytes
+};
+
+/* Create a trace frame for the hit of the given tracepoint in the
+   given thread.  */
+
+static void collect_data_at_lttng_tracepoint (struct tracepoint_hit_ctx *ctx, CORE_ADDR stop_pc, struct tracepoint *tpoint, int lttng_collector_function)
+{
+	lttng_collect_fcnt collector = collect_functions[lttng_collector_function];
+	collector(ctx, stop_pc, tpoint);
+}
+
 /* This routine, called from the jump pad (in asm) is designed to be
    called from the jump pads of fast tracepoints, thus it is on the
    critical path.  */
 
 IP_AGENT_EXPORT_FUNC void
-gdb_collect (struct tracepoint *tpoint, unsigned char *regs)
+gdb_collect (struct tracepoint *tpoint, unsigned char *regs, int lttng_collector)
 {
   struct fast_tracepoint_ctx ctx;
 
@@ -6132,8 +6252,8 @@ gdb_collect (struct tracepoint *tpoint, unsigned char *regs)
 	  || condition_true_at_tracepoint ((struct tracepoint_hit_ctx *) &ctx,
 					   ctx.tpoint))
 	{
-	  collect_data_at_tracepoint ((struct tracepoint_hit_ctx *) &ctx,
-				      ctx.tpoint->address, ctx.tpoint);
+    	  collect_data_at_lttng_tracepoint ((struct tracepoint_hit_ctx *) &ctx,
+				      ctx.tpoint->address, ctx.tpoint, lttng_collector);
 
 	  /* Note that this will cause original insns to be written back
 	     to where we jumped from, but that's OK because we're jumping
@@ -6199,7 +6319,7 @@ lttng_collect (struct tracepoint *tpoint, unsigned char *regs)
 	  || condition_true_at_tracepoint ((struct tracepoint_hit_ctx *) &ctx,
 					   ctx.tpoint))
 	{
-	  collect_data_at_lttng_tracepoint ((struct tracepoint_hit_ctx *) &ctx,
+	  collect_data_at_tracepoint ((struct tracepoint_hit_ctx *) &ctx,
 				      ctx.tpoint->address, ctx.tpoint);
 
 	  /* Note that this will cause original insns to be written back

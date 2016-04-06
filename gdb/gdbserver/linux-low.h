@@ -222,7 +222,8 @@ struct linux_target_ops
 					   ULONGEST *jjump_pad_insn_size,
 					   CORE_ADDR *adjusted_insn_addr,
 					   CORE_ADDR *adjusted_insn_addr_end,
-					   char *err);
+					   char *err,
+					   int lttng_collector);
 
   /* Return the bytecode operations vector for the current inferior.
      Returns NULL if bytecode compilation is not supported.  */

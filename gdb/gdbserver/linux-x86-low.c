@@ -1108,7 +1108,8 @@ amd64_install_fast_tracepoint_jump_pad (CORE_ADDR tpoint, CORE_ADDR tpaddr,
 					ULONGEST *jjump_pad_insn_size,
 					CORE_ADDR *adjusted_insn_addr,
 					CORE_ADDR *adjusted_insn_addr_end,
-					char *err)
+					char *err,
+					int lttng_collector)
 {
   unsigned char buf[40];
   int i, offset;
@@ -1157,17 +1158,17 @@ amd64_install_fast_tracepoint_jump_pad (CORE_ADDR tpoint, CORE_ADDR tpaddr,
   i += push_opcode (&buf[i], "48 89 44 24 08"); /* mov %rax,0x8(%rsp) */
   append_insns (&buildaddr, i, buf);
 
-  /* spin-lock.  */
-  i = 0;
-  i += push_opcode (&buf[i], "48 be");		/* movl <lockaddr>,%rsi */
-  memcpy (&buf[i], (void *) &lockaddr, 8);
-  i += 8;
-  i += push_opcode (&buf[i], "48 89 e1");       /* mov %rsp,%rcx */
-  i += push_opcode (&buf[i], "31 c0");		/* xor %eax,%eax */
-  i += push_opcode (&buf[i], "f0 48 0f b1 0e"); /* lock cmpxchg %rcx,(%rsi) */
-  i += push_opcode (&buf[i], "48 85 c0");	/* test %rax,%rax */
-  i += push_opcode (&buf[i], "75 f4");		/* jne <again> */
-  append_insns (&buildaddr, i, buf);
+//  /* spin-lock.  */
+//  i = 0;
+//  i += push_opcode (&buf[i], "48 be");		/* movl <lockaddr>,%rsi */
+//  memcpy (&buf[i], (void *) &lockaddr, 8);
+//  i += 8;
+//  i += push_opcode (&buf[i], "48 89 e1");       /* mov %rsp,%rcx */
+//  i += push_opcode (&buf[i], "31 c0");		/* xor %eax,%eax */
+//  i += push_opcode (&buf[i], "f0 48 0f b1 0e"); /* lock cmpxchg %rcx,(%rsi) */
+//  i += push_opcode (&buf[i], "48 85 c0");	/* test %rax,%rax */
+//  i += push_opcode (&buf[i], "75 f4");		/* jne <again> */
+//  append_insns (&buildaddr, i, buf);
 
   /* Set up the gdb_collect call.  */
   /* At this point, (stack pointer + 0x18) is the base of our saved
@@ -1183,6 +1184,15 @@ amd64_install_fast_tracepoint_jump_pad (CORE_ADDR tpoint, CORE_ADDR tpaddr,
   i += 8;
   append_insns (&buildaddr, i, buf);
 
+  /* Put lttng_collector into rdx as the third argument.
+     * It will be used to select the right collector function
+     */
+    i = 0;
+    i += push_opcode (&buf[i], "48 c7 c2"); /* mov value, %rdx */
+    memcpy (buf + i, &lttng_collector, 4);
+    i += 4;
+    append_insns (&buildaddr, i, buf);
+
   /* The collector function being in the shared library, may be
      >31-bits away off the jump pad.  */
   i = 0;
@@ -1192,13 +1202,13 @@ amd64_install_fast_tracepoint_jump_pad (CORE_ADDR tpoint, CORE_ADDR tpaddr,
   i += push_opcode (&buf[i], "ff d0");          /* callq *%rax */
   append_insns (&buildaddr, i, buf);
 
-  /* Clear the spin-lock.  */
-  i = 0;
-  i += push_opcode (&buf[i], "31 c0");		/* xor %eax,%eax */
-  i += push_opcode (&buf[i], "48 a3");		/* mov %rax, lockaddr */
-  memcpy (buf + i, &lockaddr, 8);
-  i += 8;
-  append_insns (&buildaddr, i, buf);
+//  /* Clear the spin-lock.  */
+//  i = 0;
+//  i += push_opcode (&buf[i], "31 c0");		/* xor %eax,%eax */
+//  i += push_opcode (&buf[i], "48 a3");		/* mov %rax, lockaddr */
+//  memcpy (buf + i, &lockaddr, 8);
+//  i += 8;
+//  append_insns (&buildaddr, i, buf);
 
   /* Remove stack that had been used for the collect_t object.  */
   i = 0;
@@ -1662,7 +1672,7 @@ x86_install_fast_tracepoint_jump_pad (CORE_ADDR tpoint, CORE_ADDR tpaddr,
 				      ULONGEST *jjump_pad_insn_size,
 				      CORE_ADDR *adjusted_insn_addr,
 				      CORE_ADDR *adjusted_insn_addr_end,
-				      char *err)
+				      char *err, int lttng_collector)
 {
 #ifdef __x86_64__
   if (is_64bit_tdesc ())
@@ -1674,7 +1684,8 @@ x86_install_fast_tracepoint_jump_pad (CORE_ADDR tpoint, CORE_ADDR tpaddr,
 						   jjump_pad_insn_size,
 						   adjusted_insn_addr,
 						   adjusted_insn_addr_end,
-						   err);
+						   err,
+						   lttng_collector);
 #endif
 
   return i386_install_fast_tracepoint_jump_pad (tpoint, tpaddr,

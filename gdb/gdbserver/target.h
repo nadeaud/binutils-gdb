@@ -369,7 +369,8 @@ struct target_ops
 					   ULONGEST *jjump_pad_insn_size,
 					   CORE_ADDR *adjusted_insn_addr,
 					   CORE_ADDR *adjusted_insn_addr_end,
-					   char *err);
+					   char *err,
+					   int lttng_collector);
 
   /* Return the bytecode operations vector for the current inferior.
      Returns NULL if bytecode compilation is not supported.  */
@@ -622,7 +623,8 @@ int kill_inferior (int);
 					 jjump_pad_insn_size,		\
 					 adjusted_insn_addr,		\
 					 adjusted_insn_addr_end,	\
-					 err)				\
+					 err,		\
+					 lttng_collector)				\
   (*the_target->install_fast_tracepoint_jump_pad) (tpoint, tpaddr,	\
 						   collector,lockaddr,	\
 						   orig_size, jump_entry, \
@@ -632,7 +634,8 @@ int kill_inferior (int);
 						   jjump_pad_insn_size, \
 						   adjusted_insn_addr,	\
 						   adjusted_insn_addr_end, \
-						   err)
+						   err,		\
+						   lttng_collector)
 
 #define install_lttng_tracepoint_jump_pad(tpoint, tpaddr,		\
 					 collector, lockaddr,		\
