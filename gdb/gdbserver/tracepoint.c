@@ -1407,7 +1407,8 @@ static void do_action_at_lttng_tracepoint (struct tracepoint_hit_ctx *ctx,
 				     struct tracepoint *tpoint,
 				     struct tracepoint_action *taction,
 					 unsigned char * buf,
-					 int * new_index);
+					 int * new_index,
+					 unsigned long traceframe_id);
 
 #ifndef IN_PROCESS_AGENT
 static struct tracepoint *fast_tracepoint_from_ipa_tpoint_address (CORE_ADDR);
@@ -5150,7 +5151,8 @@ do_action_at_lttng_tracepoint (struct tracepoint_hit_ctx *ctx,
 			 struct tracepoint *tpoint,
 			 struct tracepoint_action *taction,
 			 unsigned char * buf,
-			 int * index)
+			 int * index,
+			 unsigned long traceframe_id)
 {
 	enum eval_result_type err;
 
@@ -5168,7 +5170,7 @@ do_action_at_lttng_tracepoint (struct tracepoint_hit_ctx *ctx,
 				pulongest (maction->len),
 				paddress (maction->addr), maction->basereg);
 		/* (should use basereg)*/
-		agent_mem_read (&ax_ctx, &buf[*index], (CORE_ADDR) maction->addr,
+		agent_mem_read (&ax_ctx, buf, (CORE_ADDR) maction->addr,
 				maction->len);
 		*index += maction->len;
 
@@ -5188,12 +5190,29 @@ do_action_at_lttng_tracepoint (struct tracepoint_hit_ctx *ctx,
 		/* If this is defined for gdbserver, there will be a duplicate registration
 		 * of this tracepoint, causing the program to fail.
 		 */
+		tracepoint(gdb_trace, amd64_registers, tpoint->number, traceframe_id, context_regcache->registers);
+		/*
 		tracepoint(gdb_trace, amd64_registers,
-				(uint64_t) context_regcache->registers,
-				(uint64_t) ((char*)context_regcache->registers)+8,
-				(uint64_t) ((char*)context_regcache->registers)+16,
-				(uint64_t) ((char*)context_regcache->registers)+24
+				tpoint->number,
+				*(((unsigned long*) context_regcache->registers)),
+				*((unsigned long*) (((char*)context_regcache->registers)+8)),
+				*((unsigned long*) (((char*)context_regcache->registers)+16)),
+				*((unsigned long*) (((char*)context_regcache->registers)+24)),
+				*((unsigned long*) (((char*)context_regcache->registers)+32)),
+				*((unsigned long*) (((char*)context_regcache->registers)+40)),
+				*((unsigned long*) (((char*)context_regcache->registers)+48)),
+				*((unsigned long*) (((char*)context_regcache->registers)+56)),
+				*((unsigned long*) (((char*)context_regcache->registers)+64)),
+				*((unsigned long*) (((char*)context_regcache->registers)+72)),
+				*((unsigned long*) (((char*)context_regcache->registers)+80)),
+				*((unsigned long*) (((char*)context_regcache->registers)+88)),
+				*((unsigned long*) (((char*)context_regcache->registers)+96)),
+				*((unsigned long*) (((char*)context_regcache->registers)+104)),
+				*((unsigned long*) (((char*)context_regcache->registers)+112)),
+				*((unsigned long*) (((char*)context_regcache->registers)+120)),
+				*((unsigned long*) (((char*)context_regcache->registers)+128))
 				);
+				*/
 #endif
 #ifndef IN_PROCESS_AGENT
 		/* On some platforms, trap-based tracepoints will have the PC
@@ -6164,35 +6183,40 @@ void trace_8bytes(struct tracepoint_hit_ctx *ctx, CORE_ADDR stop_pc, struct trac
 {
 	unsigned char buf[8];
 	int acti, index=0;
+	unsigned long traceframe_id = get_traceframe();
 
 	for (acti = 0; acti < tpoint->numactions; ++acti)
 	{
-		do_action_at_lttng_tracepoint (ctx, stop_pc, tpoint,tpoint->actions[acti], &buf[index], &index);
+		do_action_at_lttng_tracepoint (ctx, stop_pc, tpoint,tpoint->actions[acti], &buf[index], &index, traceframe_id);
 	}
-	tracepoint(gdb_trace, lttng_8bytes, buf);
+	tracepoint(gdb_trace, lttng_8bytes, tpoint->number, traceframe_id, buf);
 }
 
 void trace_16bytes(struct tracepoint_hit_ctx *ctx, CORE_ADDR stop_pc, struct tracepoint *tpoint)
 {
 	unsigned char buf[16];
-	int acti, i, index=0;
+	int acti, i=0, index=0;
+	unsigned long traceframe_id = get_traceframe();
+
 	for (acti = 0; acti < tpoint->numactions; ++acti)
 	{
-		do_action_at_lttng_tracepoint (ctx, stop_pc, tpoint,tpoint->actions[acti], &buf[index], &index);
+		do_action_at_lttng_tracepoint (ctx, stop_pc, tpoint,tpoint->actions[acti], &buf[index], &index, traceframe_id);
 	}
-	tracepoint(gdb_trace, lttng_16bytes, buf);
+
+	tracepoint(gdb_trace, lttng_16bytes, tpoint->number, traceframe_id, buf);
 }
 
 void trace_24bytes(struct tracepoint_hit_ctx *ctx, CORE_ADDR stop_pc, struct tracepoint *tpoint)
 {
 	unsigned char buf[24];
 	int acti, index=0;
+	unsigned long traceframe_id = get_traceframe();
 
 	for (acti = 0; acti < tpoint->numactions; ++acti)
 	{
-		do_action_at_lttng_tracepoint (ctx, stop_pc, tpoint,tpoint->actions[acti], &buf[index], &index);
+		do_action_at_lttng_tracepoint (ctx, stop_pc, tpoint,tpoint->actions[acti], &buf[index], &index, traceframe_id);
 	}
-	tracepoint(gdb_trace, lttng_24bytes, buf);
+	tracepoint(gdb_trace, lttng_24bytes, tpoint->number, traceframe_id, buf);
 }
 
 lttng_collect_fcnt collect_functions[3] = {
@@ -6273,11 +6297,11 @@ gdb_collect (struct tracepoint *tpoint, unsigned char *regs, int lttng_collector
 	     way we would stop tracing is if there was an error during
 	     condition expression evaluation.  */
 	  if (expr_eval_result != expr_eval_no_error)
-	    {
+	  {
 	      stop_tracing ();
 	      break;
-	    }
-	}
+	  }
+    	}
     }
 }
 
