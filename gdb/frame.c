@@ -2804,6 +2804,7 @@ set_backtrace_cmd (char *args, int from_tty)
 static void
 show_backtrace_cmd (char *args, int from_tty)
 {
+	printf("bt called");
   cmd_show_list (show_backtrace_cmdlist, from_tty, "");
 }
 

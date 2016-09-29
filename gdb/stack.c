@@ -1869,7 +1869,34 @@ backtrace_command_1 (char *count_exp, int show_locals, int no_filters,
     }
 }
 
-static void
+char* parse_backtrace_command(char *arg)
+{
+  //  if( arg != NULL)
+  //    {
+  char *ret = NULL;
+  struct frame_info *current, *fi = NULL;
+  current = get_current_frame ();
+  struct symbol *func;
+  enum language funlang = language_unknown;
+  while(current)
+    {
+      char *funname = NULL;
+      find_frame_funname (current, &funname, &funlang, &func);
+      if(funname != NULL && strstr(funname, arg) != NULL)
+	{
+	  find_frame_funname (fi, &ret, &funlang, &func);
+	  xfree(funname);
+	  return ret;
+	}
+      fi = current;
+      current = get_prev_frame(current);
+      xfree(funname);
+    }
+  //    }
+  return NULL;
+}
+
+void
 backtrace_command (char *arg, int from_tty)
 {
   struct cleanup *old_chain = make_cleanup (null_cleanup, NULL);

@@ -44,6 +44,7 @@
 #include "cli/cli-utils.h"
 #include "thread-fsm.h"
 #include "tid-parse.h"
+#include "stack.h"
 
 /* Definition of struct thread_info exported to gdbthread.h.  */
 
@@ -1192,6 +1193,110 @@ should_print_thread (const char *requested_threads, int default_inf_num,
    whether REQUESTED_THREADS is a list of global or per-inferior
    thread ids.  */
 
+struct OMP_Threads {
+  char * func;
+  int nb_threads;
+  int max_size;
+  long *thread_ids;
+  struct OMP_Threads *next;
+};
+
+struct OMP_Threads* omp_thread_in_list(struct OMP_Threads *list, char *funname)
+{
+  if(funname == NULL || list == NULL)
+    return NULL;
+
+  for(; list && list->func; list = list->next)
+    {
+      if(strcmp(list->func, funname) == 0 )
+	{
+	  return list;
+	}
+    }
+  return NULL;
+}
+
+struct OMP_Threads* add_omp_item(struct OMP_Threads *item, int ptid, char *funname)
+{
+  item = (struct OMP_Threads*) malloc(sizeof(struct OMP_Threads));
+  item->thread_ids = (long*)malloc(sizeof(long)*4); // default, allocate for 4
+  item->max_size = 4;
+  item->nb_threads = 1;
+  item->func = funname;
+  item->thread_ids[0] = ptid;
+  item->next = NULL;
+  return item;
+}
+
+void add_thread_to_omp_item(struct OMP_Threads *item, int ptid)
+{
+  if(item->nb_threads >= item->max_size)
+    {
+      int i;
+      long *array = (long*)malloc(sizeof(long)*item->max_size*2);
+      item->max_size = item->max_size*2;
+      for(i=0; i<item->nb_threads ; i++)
+	{
+	  array[i] = item->thread_ids[i];
+	}
+      array[item->nb_threads] = ptid;
+      free(item->thread_ids);
+      item->nb_threads = item->nb_threads + 1;
+      item->thread_ids = array;
+    }
+  else
+    {
+      item->thread_ids[item->nb_threads] = ptid;
+      item->nb_threads = item->nb_threads+1;
+    }
+}
+
+
+void
+info_thread_openmp_command(char *arg, int from_tty)
+{
+  struct thread_info *tp;
+  struct OMP_Threads *omp_list = NULL, *omp_ptr = NULL, *head = NULL;
+  char *funname = NULL;
+  update_thread_list ();
+  for (tp = thread_list; tp; tp = tp->next)
+    {
+      switch_to_thread (tp->ptid);
+      funname = parse_backtrace_command("_omp_fn");
+      if(funname)
+	{
+	  struct OMP_Threads *ptr = NULL;
+	  if(!omp_list)
+	    {
+	      omp_list = add_omp_item(omp_list, tp->ptid.lwp, funname);
+	      head = omp_list;
+	      continue;
+	    }
+	  ptr = omp_thread_in_list(omp_list, funname);
+	  omp_list = head;
+	  if(ptr)
+	    {
+	      add_thread_to_omp_item(ptr, tp->ptid.lwp);
+	    }
+	  else
+	    {
+	      omp_list->next = add_omp_item(omp_list->next, tp->ptid.lwp, funname);
+	    }
+	}
+    }
+
+  for(omp_ptr = head; omp_ptr ; omp_ptr = omp_ptr->next)
+    {
+      int i;
+      if(omp_ptr->func)
+      	printf("OpenMP Task : %s\n", omp_ptr->func);
+      for(i=0; i<omp_ptr->nb_threads; i++)
+	{
+	  printf("\t%ld\n", omp_ptr->thread_ids[i]);
+	}
+    }
+}
+
 static void
 print_thread_info_1 (struct ui_out *uiout, char *requested_threads,
 		     int global_ids, int pid,
@@ -2187,6 +2292,13 @@ void
 _initialize_thread (void)
 {
   static struct cmd_list_element *thread_apply_list = NULL;
+
+  add_info("openmp", info_thread_openmp_command,
+	    _("Display openmp threads.\n\
+Usage: info threads [-gid] [ID]...\n\
+-gid: Show global thread IDs.\n\
+If ID is given, it is a space-separated list of IDs of threads to display.\n\
+Otherwise, all threads are displayed."));
 
   add_info ("threads", info_threads_command, 
 	    _("Display currently known threads.\n\

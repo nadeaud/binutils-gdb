@@ -46,5 +46,6 @@ CORE_ADDR get_last_displayed_addr (void);
 struct symtab* get_last_displayed_symtab (void);
 int get_last_displayed_line (void);
 void get_last_displayed_sal (struct symtab_and_line *sal);
+char* parse_backtrace_command(char *arg);
 
 #endif /* #ifndef STACK_H */
