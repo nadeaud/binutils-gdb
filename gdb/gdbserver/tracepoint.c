@@ -6219,6 +6219,20 @@ void trace_24bytes(struct tracepoint_hit_ctx *ctx, CORE_ADDR stop_pc, struct tra
 	tracepoint(gdb_trace, lttng_24bytes, tpoint->number, traceframe_id, buf);
 }
 
+void general_lttng_tracepoint(void *ptr_tpoint, void * ptr_tpoint_hit, unsigned long _stop_pc, int traceframe_id, unsigned char *buf)
+{
+	struct tracepoint *tpoint = (struct tracepoint *)ptr_tpoint;
+	struct tracepoint_hit_ctx *ctx = (struct tracepoint_hit_ctx *)ptr_tpoint_hit;
+	CORE_ADDR stop_pc = (CORE_ADDR)_stop_pc;
+	int index=0, acti=0;
+
+	for (acti = 0; acti < tpoint->numactions; ++acti)
+	{
+		do_action_at_lttng_tracepoint (ctx, stop_pc, tpoint,tpoint->actions[acti], &buf[index], &index, traceframe_id);
+	}
+
+}
+
 lttng_collect_fcnt collect_functions[3] = {
 		&trace_8bytes,
 		&trace_16bytes,
@@ -6230,6 +6244,7 @@ lttng_collect_fcnt collect_functions[3] = {
 
 static void collect_data_at_lttng_tracepoint (struct tracepoint_hit_ctx *ctx, CORE_ADDR stop_pc, struct tracepoint *tpoint, int lttng_collector_function)
 {
+	//_trace_16bytes(tpoint, ctx, tpoint->number, stop_pc);
 	lttng_collect_fcnt collector = collect_functions[lttng_collector_function];
 	collector(ctx, stop_pc, tpoint);
 }

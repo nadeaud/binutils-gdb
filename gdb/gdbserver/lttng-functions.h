@@ -19,3 +19,11 @@ int get_lttng_trace_function(int size);
 unsigned long get_traceframe();
 
 #endif /* GDB_GDBSERVER_LTTNG_FUNCTIONS_H_ */
+
+#ifdef IN_PROCESS_AGENT
+
+void _trace_16bytes(void * tpoint, void * tpoint_hit, int tpoint_number, unsigned long stop_pc);
+
+void general_lttng_tracepoint(void *ptr_tpoint, void * ptr_tpoint_hit, unsigned long stop_pc, int traceframe_id, unsigned char *buf);
+
+#endif

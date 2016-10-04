@@ -5,9 +5,13 @@
  *      Author: didier
  */
 
-#include "stdio.h"
+#include <stdio.h>
 
 #include "lttng-functions.h"
+
+#ifdef IN_PROCESS_AGENT
+#include "lttng-collect.h"
+#endif
 
 unsigned long traceframe_id=0;
 
@@ -19,12 +23,13 @@ int collector_size[] = {
 
 int get_lttng_trace_function(int size)
 {
+	int i;
+
 	if(size == 0)
 		return -1;
 	if(size > collector_size[NUMBER_COLLECTOR_FUNCTIONS-1])
 		return -1;
 
-	int i;
 	for( i=0; i<NUMBER_COLLECTOR_FUNCTIONS; ++i)
 	{
 		if(size <= collector_size[i])
@@ -40,11 +45,27 @@ int get_lttng_trace_function(int size)
 unsigned long get_traceframe()
 {
 	unsigned long result = 1;
-	__asm__ __volatile__ ("lock; xadd %0, %1"
-	            :"=r"(result), "=m"(traceframe_id)
-	            :"r"(result), "m"(traceframe_id)
-	            :"memory");
+
+	//__asm__ __volatile__ ("lock; xadd %0, %1"
+	//            :"=r"(result), "=m"(traceframe_id)
+	//            :"r"(result), "m"(traceframe_id)
+	//            :"memory");
 	return result;
 }
+
+#ifdef IN_PROCESS_AGENT
+
+void _trace_16bytes(void * tpoint, void * tpoint_hit, int tpoint_number, unsigned long stop_pc)
+{
+	unsigned char buf[16];
+	unsigned long traceframe_id = get_traceframe();
+
+	general_lttng_tracepoint(tpoint, tpoint_hit, stop_pc, traceframe_id, buf);
+
+	tracepoint(gdb_trace, lttng_16bytes, tpoint_number, traceframe_id, buf);
+}
+
+#endif
+
 
 
