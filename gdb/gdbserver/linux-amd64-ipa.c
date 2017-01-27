@@ -48,12 +48,14 @@ extern const struct target_desc *tdesc_amd64_linux;
 
 static const int x86_64_ft_collect_regmap[] = {
   FT_CR_RAX * 8, FT_CR_RBX * 8, FT_CR_RCX * 8, FT_CR_RDX * 8,
-  FT_CR_RSI * 8, FT_CR_RDI * 8, FT_CR_RBP * 8, FT_CR_RSP * 8,
+  FT_CR_RSI * 8, FT_CR_RDI * 8, FT_CR_RBP * 8, FT_CR_RSP * 8};
+/*
+, FT_CR_RSP * 8,
   FT_CR_R8 * 8,  FT_CR_R9 * 8,  FT_CR_R10 * 8, FT_CR_R11 * 8,
   FT_CR_R12 * 8, FT_CR_R13 * 8, FT_CR_R14 * 8, FT_CR_R15 * 8,
   FT_CR_RIP * 8, FT_CR_EFLAGS * 8
 };
-
+*/
 #define X86_64_NUM_FT_COLLECT_GREGS \
   (sizeof (x86_64_ft_collect_regmap) / sizeof(x86_64_ft_collect_regmap[0]))
 

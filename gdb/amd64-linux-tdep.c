@@ -2283,6 +2283,7 @@ _initialize_amd64_linux_tdep (void)
 
   /* Initialize the Linux target description.  */
   initialize_tdesc_amd64_linux ();
+  initialize_tdesc_amd64_linux_trace ();
   initialize_tdesc_amd64_avx_linux ();
   initialize_tdesc_amd64_mpx_linux ();
   initialize_tdesc_amd64_avx512_linux ();

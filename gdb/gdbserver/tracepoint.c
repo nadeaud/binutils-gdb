@@ -30,6 +30,8 @@
 #include "ax.h"
 #include "tdesc.h"
 
+
+//#define IN_PROCESS_AGENT
 #define DEFAULT_TRACE_BUFFER_SIZE 5242880 /* 5*1024*1024 */
 
 /* This file is built for both GDBserver, and the in-process
@@ -58,6 +60,7 @@
    at appropriate times.
 
 */
+
 
 #ifdef IN_PROCESS_AGENT
 
@@ -4734,6 +4737,7 @@ get_context_regcache (struct tracepoint_hit_ctx *ctx)
 	{
 	  fctx->regcache_initted = 1;
 	  init_register_cache (&fctx->regcache, ipa_tdesc, fctx->regspace);
+	  //init_register_cache (&fctx->regcache, tdesc_amd64_linux_trace, fctx->regspace);
 	  supply_regblock (&fctx->regcache, NULL);
 	  supply_fast_tracepoint_registers (&fctx->regcache, fctx->regs);
 	}
@@ -4749,6 +4753,7 @@ get_context_regcache (struct tracepoint_hit_ctx *ctx)
 	{
 	  sctx->regcache_initted = 1;
 	  init_register_cache (&sctx->regcache, ipa_tdesc, sctx->regspace);
+	  //init_register_cache (&fctx->regcache, tdesc_amd64_linux_trace, fctx->regspace);
 	  supply_regblock (&sctx->regcache, NULL);
 	  /* Pass down the tracepoint address, because REGS doesn't
 	     include the PC, but we know what it must have been.  */
@@ -4813,6 +4818,8 @@ do_action_at_tracepoint (struct tracepoint_hit_ctx *ctx,
 
 	context_regcache = get_context_regcache (ctx);
 	regcache_size = register_cache_size (context_regcache->tdesc);
+
+	//regcache_size = 48;
 
 	/* Collect all registers for now.  */
 	regspace = add_traceframe_block (tframe, tpoint, 1 + regcache_size);
@@ -5810,6 +5817,7 @@ gdb_collect (struct tracepoint *tpoint, unsigned char *regs)
   /* Wrap the regblock in a register cache (in the stack, we don't
      want to malloc here).  */
   ctx.regspace = (unsigned char *) alloca (ipa_tdesc->registers_size);
+  //ctx.regspace = (unsigned char *) alloca (tdesc_amd64_linux_trace->registers_size);
   if (ctx.regspace == NULL)
     {
       trace_debug ("Trace buffer block allocation failed, skipping");
