@@ -60,7 +60,7 @@ void _trace_16bytes(void * tpoint, void * tpoint_hit, int tpoint_number, unsigne
 	unsigned char buf[16];
 	unsigned long traceframe_id = get_traceframe();
 
-	general_lttng_tracepoint(tpoint, tpoint_hit, stop_pc, traceframe_id, buf);
+	//general_lttng_tracepoint(tpoint, tpoint_hit, stop_pc, traceframe_id, buf);
 
 	tracepoint(gdb_trace, lttng_16bytes, tpoint_number, traceframe_id, buf);
 }

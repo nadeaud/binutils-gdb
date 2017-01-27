@@ -3207,13 +3207,22 @@ install_fast_tracepoint (struct tracepoint *tpoint, char *errbuf)
 
   trace_size = eval_size_traceframe(tpoint);
 
-  if(trace_size < 0)
-	  return 1;
+  // Commented for test purposes (collect registers only)
+  //if(trace_size < 0)
+	//  return 1;
 
-  lttng_collector = get_lttng_trace_function(trace_size);
+  if (trace_size > 0)
+    {
+      lttng_collector = get_lttng_trace_function(trace_size);
+    }
+  else
+    {
+      lttng_collector = -1;
+    }
 
-  if(lttng_collector < 0)
-	  return 1;
+  // idem
+  //if(lttng_collector < 0)
+//	  return 1;
 
   /* Install the jump pad.  */
   err = install_fast_tracepoint_jump_pad (tpoint->obj_addr_on_target,
@@ -6219,12 +6228,11 @@ void trace_24bytes(struct tracepoint_hit_ctx *ctx, CORE_ADDR stop_pc, struct tra
 	tracepoint(gdb_trace, lttng_24bytes, tpoint->number, traceframe_id, buf);
 }
 
-void general_lttng_tracepoint(void *ptr_tpoint, void * ptr_tpoint_hit, unsigned long _stop_pc, int traceframe_id, unsigned char *buf)
+void general_lttng_tracepoint(struct tracepoint_hit_ctx *ctx, CORE_ADDR stop_pc, struct tracepoint *tpoint)
 {
-	struct tracepoint *tpoint = (struct tracepoint *)ptr_tpoint;
-	struct tracepoint_hit_ctx *ctx = (struct tracepoint_hit_ctx *)ptr_tpoint_hit;
-	CORE_ADDR stop_pc = (CORE_ADDR)_stop_pc;
-	int index=0, acti=0;
+      unsigned char buf[24];
+	int acti, index=0;
+  	unsigned long traceframe_id = get_traceframe();
 
 	for (acti = 0; acti < tpoint->numactions; ++acti)
 	{
@@ -6245,8 +6253,16 @@ lttng_collect_fcnt collect_functions[3] = {
 static void collect_data_at_lttng_tracepoint (struct tracepoint_hit_ctx *ctx, CORE_ADDR stop_pc, struct tracepoint *tpoint, int lttng_collector_function)
 {
 	//_trace_16bytes(tpoint, ctx, tpoint->number, stop_pc);
-	lttng_collect_fcnt collector = collect_functions[lttng_collector_function];
-	collector(ctx, stop_pc, tpoint);
+
+	if (lttng_collector_function != -1)
+	  {
+	      lttng_collect_fcnt collector = collect_functions[lttng_collector_function];
+	      collector(ctx, stop_pc, tpoint);
+	  }
+	else
+	  {
+	    general_lttng_tracepoint (ctx, stop_pc, tpoint);
+	  }
 }
 
 /* This routine, called from the jump pad (in asm) is designed to be

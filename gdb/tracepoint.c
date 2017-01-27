@@ -650,7 +650,8 @@ static void
 trace_actions_command (char *args, int from_tty)
 {
   struct tracepoint *t;
-  struct command_line *l;
+  struct command_line *l,*k;
+  char *cmd;
 
   t = get_tracepoint_by_number (&args, NULL);
   if (t)
@@ -659,11 +660,20 @@ trace_actions_command (char *args, int from_tty)
 	xstrprintf ("Enter actions for tracepoint %d, one per line.",
 		    t->base.number);
       struct cleanup *cleanups = make_cleanup (xfree, tmpbuf);
+      asprintf(&cmd, "collect $regs");
 
-      l = read_command_lines (tmpbuf, from_tty, 1,
-			      check_tracepoint_command, t);
+      //l = read_command_lines (tmpbuf, from_tty, 1,
+	//		      check_tracepoint_command, t);
+
+      k = XNEW (struct command_line);
+      k->line = cmd;
+      k->control_type = simple_control;
+      k->body_count = 0;
+      k->body_list = NULL;
+      k->next = NULL;
+
       do_cleanups (cleanups);
-      breakpoint_set_commands (&t->base, l);
+      breakpoint_set_commands (&t->base, k);
     }
   /* else just return */
 }

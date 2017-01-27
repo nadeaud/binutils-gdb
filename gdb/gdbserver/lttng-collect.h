@@ -66,7 +66,7 @@ TRACEPOINT_EVENT(
     TP_FIELDS(
         ctf_integer(int, tp_id, tp_id)
 	ctf_integer(unsigned long, traceframe_id, traceframe_id)
-        ctf_array(unsigned char, registers, reg, 544)
+        ctf_array(unsigned char, registers, reg, 48)
     )
 )
 
