@@ -89,9 +89,6 @@ int mi_proceeded;
 
 extern void _initialize_mi_main (void);
 static void mi_cmd_execute (struct mi_parse *parse);
-
-static void mi_execute_cli_command (const char *cmd, int args_p,
-				    const char *args);
 static void mi_execute_async_cli_command (const char *cli_command,
 					  char **argv, int argc);
 static int register_changed_p (int regnum, struct regcache *,
@@ -2105,9 +2102,6 @@ mi_execute_command (const char *cmd, int from_tty)
 
       gdb::optional<scoped_restore_tmpl<int>> restore_suppress;
 
-      if (command->cmd != NULL && command->cmd->suppress_notification != NULL)
-	restore_suppress.emplace (command->cmd->suppress_notification, 1);
-
       command->token = token;
 
       if (do_timings)
@@ -2247,17 +2241,9 @@ mi_cmd_execute (struct mi_parse *parse)
 
   current_context = parse;
 
-  if (parse->cmd->argv_func != NULL)
+  if (parse->cmd != NULL)
     {
-      parse->cmd->argv_func (parse->command, parse->argv, parse->argc);
-    }
-  else if (parse->cmd->cli.cmd != 0)
-    {
-      /* FIXME: DELETE THIS. */
-      /* The operation is still implemented by a cli command.  */
-      /* Must be a synchronous one.  */
-      mi_execute_cli_command (parse->cmd->cli.cmd, parse->cmd->cli.args_p,
-			      parse->args);
+      parse->cmd->invoke (parse);
     }
   else
     {

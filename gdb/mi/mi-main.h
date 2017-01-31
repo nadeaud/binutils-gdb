@@ -54,5 +54,7 @@ struct mi_suppress_notification
 };
 extern struct mi_suppress_notification mi_suppress_notification;
 
+void mi_execute_cli_command (const char *cmd, int args_p, const char *args);
+
 #endif
 
