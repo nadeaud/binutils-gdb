@@ -4819,7 +4819,7 @@ do_action_at_tracepoint (struct tracepoint_hit_ctx *ctx,
 	context_regcache = get_context_regcache (ctx);
 	regcache_size = register_cache_size (context_regcache->tdesc);
 
-	//regcache_size = 48;
+	regcache_size = 48;
 
 	/* Collect all registers for now.  */
 	regspace = add_traceframe_block (tframe, tpoint, 1 + regcache_size);

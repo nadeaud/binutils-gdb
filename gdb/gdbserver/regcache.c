@@ -200,7 +200,8 @@ regcache_cpy (struct regcache *dst, struct regcache *src)
   gdb_assert (src->tdesc == dst->tdesc);
   gdb_assert (src != dst);
 
-  memcpy (dst->registers, src->registers, src->tdesc->registers_size);
+  //memcpy (dst->registers, src->registers, src->tdesc->registers_size);
+  memcpy (dst->registers, src->registers, 48);
 #ifndef IN_PROCESS_AGENT
   if (dst->register_status != NULL && src->register_status != NULL)
     memcpy (dst->register_status, src->register_status,
