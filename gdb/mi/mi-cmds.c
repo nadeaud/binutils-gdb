@@ -23,6 +23,7 @@
 #include "mi-cmds.h"
 #include "mi-main.h"
 #include "mi-parse.h"
+#include "python/py-micmd.h"
 #include <map>
 #include <string>
 #include <memory>
@@ -31,10 +32,9 @@
 
 static std::map<std::string, mi_cmd_up> mi_cmd_table;
 
-/* Insert a new mi-command into the command table.  Return true if
-   insertion was successful.  */
+/* See mi-cmds.h.  */
 
-static bool
+bool
 insert_mi_cmd_entry (mi_cmd_up command)
 {
   gdb_assert (command != NULL);
@@ -130,6 +130,27 @@ mi_command_cli::invoke (struct mi_parse *parse)
 
   mi_execute_cli_command (this->m_cli_name.c_str (), this->m_args_p,
 			  parse->args);
+}
+
+mi_command_py::mi_command_py (const char *name, int *suppress_notification,
+			      void *object)
+  : mi_command (name, suppress_notification),
+    pyobj (object)
+{}
+
+void
+mi_command_py::invoke (struct mi_parse *parse)
+{
+  std::unique_ptr<scoped_restore_tmpl <int>> restore
+      = do_suppress_notification ();
+
+  mi_parse_argv (parse->args, parse);
+
+  if (parse->argv == NULL)
+      error (_("Problem parsing arguments: %s %s"), parse->command, parse->args);
+
+  py_mi_invoke (this->pyobj, parse->argv, parse->argc);
+
 }
 
 /* Initialize the available MI commands.  */

@@ -178,6 +178,20 @@ class mi_command_cli : public mi_command
     int m_args_p;
 };
 
+/* MI command implemented on top of a Python command.  */
+
+class mi_command_py : public mi_command
+{
+  public:
+    mi_command_py (const char *name, int *suppress_notification,
+		   void *object);
+    void invoke (struct mi_parse *parse) override;
+
+  private:
+    void *pyobj;
+
+};
+
 typedef std::unique_ptr<mi_command> mi_cmd_up;
 
 /* Lookup a command in the MI command table.  */
@@ -188,5 +202,10 @@ extern mi_command *mi_cmd_lookup (const char *command);
 extern int mi_debug_p;
 
 extern void mi_execute_command (const char *cmd, int from_tty);
+
+/* Insert a new mi-command into the command table.  Return true if
+   insertion was successful.  */
+
+extern bool insert_mi_cmd_entry (mi_cmd_up command);
 
 #endif

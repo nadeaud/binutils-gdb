@@ -636,6 +636,8 @@ int gdbpy_initialize_xmethods (void)
   CPYCHECKER_NEGATIVE_RESULT_SETS_EXCEPTION;
 int gdbpy_initialize_unwind (void)
   CPYCHECKER_NEGATIVE_RESULT_SETS_EXCEPTION;
+int gdbpy_initialize_micommands (void)
+  CPYCHECKER_NEGATIVE_RESULT_SETS_EXCEPTION;
 
 /* Called before entering the Python interpreter to install the
    current language and architecture to be used for Python values.
