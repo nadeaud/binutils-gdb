@@ -14,12 +14,12 @@ TRACEPOINT_EVENT(
     gdb_trace,
     lttng_8bytes,
     TP_ARGS(
-    	int, tp_id,
+    	unsigned int, tp_id,
 	unsigned long, traceframe_id,
         unsigned char*, array8
     ),
     TP_FIELDS(
-         ctf_integer(int, tp_id, tp_id)
+         ctf_integer(unsigned int, tp_id, tp_id)
 	ctf_integer(unsigned long, traceframe_id, traceframe_id)
         ctf_array(unsigned char, data, array8, 8)
     )
@@ -29,12 +29,12 @@ TRACEPOINT_EVENT(
     gdb_trace,
     lttng_16bytes,
     TP_ARGS(
-        int, tp_id,
+	unsigned int, tp_id,
 	unsigned long, traceframe_id,
     	unsigned char*, array16
     ),
     TP_FIELDS(
-        ctf_integer(int, tp_id, tp_id)
+        ctf_integer(unsigned int, tp_id, tp_id)
 	ctf_integer(unsigned long, traceframe_id, traceframe_id)
         ctf_array(unsigned char, data, array16, 16)
     )
@@ -44,12 +44,12 @@ TRACEPOINT_EVENT(
     gdb_trace,
     lttng_24bytes,
     TP_ARGS(
-        uint32_t, tp_id,
+	unsigned int, tp_id,
     	unsigned long, traceframe_id,
    	unsigned char*, array24
     ),
     TP_FIELDS(
-        ctf_integer(uint32_t, tp_id, tp_id)
+        ctf_integer(unsigned int, tp_id, tp_id)
     	ctf_integer(unsigned long, traceframe_id, traceframe_id)
         ctf_array(unsigned char, data, array24, 24)
     )

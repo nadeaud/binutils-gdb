@@ -42,15 +42,12 @@ int get_lttng_trace_function(int size)
 	return -1;
 }
 
-unsigned long get_traceframe()
+unsigned long 
+get_traceframe()
 {
-	unsigned long result = 1;
+	static __thread unsigned long id = 0;
 
-	//__asm__ __volatile__ ("lock; xadd %0, %1"
-	//            :"=r"(result), "=m"(traceframe_id)
-	//            :"r"(result), "m"(traceframe_id)
-	//            :"memory");
-	return result;
+	return id++;
 }
 
 #ifdef IN_PROCESS_AGENT

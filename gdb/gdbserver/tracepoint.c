@@ -3251,6 +3251,12 @@ install_fast_tracepoint (struct tracepoint *tpoint, char *errbuf)
   return 0;
 }
 
+/*static int
+install_fast_conditional_breakpoint (struct breakpoint bp)
+{
+  return 0;
+}
+*/
 /* Install fast lttng  tracepoint.  Return 0 if successful, otherwise return
    non-zero.  */
 
@@ -5190,7 +5196,7 @@ do_action_at_lttng_tracepoint (struct tracepoint_hit_ctx *ctx,
 		/* If this is defined for gdbserver, there will be a duplicate registration
 		 * of this tracepoint, causing the program to fail.
 		 */
-		tracepoint(gdb_trace, amd64_registers, tpoint->number, traceframe_id, context_regcache->registers);
+		//tracepoint(gdb_trace, amd64_registers, tpoint->number, traceframe_id, context_regcache->registers);
 		/*
 		tracepoint(gdb_trace, amd64_registers,
 				tpoint->number,
