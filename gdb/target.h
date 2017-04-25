@@ -480,6 +480,9 @@ struct target_ops
     int (*to_insert_breakpoint) (struct target_ops *, struct gdbarch *,
 				 struct bp_target_info *)
       TARGET_DEFAULT_FUNC (memory_insert_breakpoint);
+    int (*to_insert_fast_conditional_breakpoint) (struct target_ops *, struct gdbarch *,
+    				 struct bp_target_info *)
+          TARGET_DEFAULT_FUNC (memory_insert_breakpoint);
     int (*to_remove_breakpoint) (struct target_ops *, struct gdbarch *,
 				 struct bp_target_info *,
 				 enum remove_bp_reason)
@@ -1520,6 +1523,9 @@ int target_write_memory_blocks (VEC(memory_write_request_s) *requests,
 
 extern int target_insert_breakpoint (struct gdbarch *gdbarch,
 				     struct bp_target_info *bp_tgt);
+
+extern int target_insert_fast_conditional_breakpoint (struct gdbarch *gdbarch,
+					   struct bp_target_info *bp_tgt);
 
 /* Remove a breakpoint at address BP_TGT->placed_address in the target
    machine.  Result is 0 for success, non-zero for error.  */

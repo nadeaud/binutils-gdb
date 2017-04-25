@@ -9767,6 +9767,72 @@ Target doesn't support breakpoints that have target side commands."));
 }
 
 static int
+remote_insert_fast_conditional_breakpoint (struct target_ops *ops,
+			  struct gdbarch *gdbarch,
+			  struct bp_target_info *bp_tgt)
+{
+  /* Try the "Z" s/w breakpoint packet if it is not already disabled.
+     If it succeeds, then set the support to PACKET_ENABLE.  If it
+     fails, and the user has explicitly requested the Z support then
+     report an error, otherwise, mark it disabled and go on.  */
+  int orig_size = -1;
+
+  if (packet_support (PACKET_Z0) != PACKET_DISABLE)
+    {
+      CORE_ADDR addr = bp_tgt->reqstd_address;
+      struct remote_state *rs;
+      char *p, *endbuf;
+      int bpsize;
+
+      /* Make sure the remote is pointing at the right process, if
+	 necessary.  */
+      if (!gdbarch_has_global_breakpoints (target_gdbarch ()))
+	set_general_process ();
+
+      rs = get_remote_state ();
+      p = rs->buf;
+      endbuf = rs->buf + get_remote_packet_size ();
+
+      *(p++) = 'Z';
+      *(p++) = '5';
+      *(p++) = ',';
+      addr = (ULONGEST) remote_address_masked (addr);
+      p += hexnumstr (p, addr);
+      xsnprintf (p, endbuf - p, ",%d", bp_tgt->kind);
+
+      xsnprintf (p, endbuf - p, ":F%x",
+		 gdb_insn_length (gdbarch, addr));
+
+      if (remote_supports_cond_breakpoints (ops))
+	remote_add_target_side_condition (gdbarch, bp_tgt, p, endbuf);
+
+      if (remote_can_run_breakpoint_commands (ops))
+	remote_add_target_side_commands (gdbarch, bp_tgt, p);
+
+      putpkt (rs->buf);
+      getpkt (&rs->buf, &rs->buf_size, 0);
+
+      switch (packet_ok (rs->buf, &remote_protocol_packets[PACKET_Z0]))
+	{
+	case PACKET_ERROR:
+	  return -1;
+	case PACKET_OK:
+	  return 0;
+	case PACKET_UNKNOWN:
+	  break;
+	}
+    }
+
+  /* If this breakpoint has target-side commands but this stub doesn't
+     support Z0 packets, throw error.  */
+  if (!bp_tgt->tcommands.empty ())
+    throw_error (NOT_SUPPORTED_ERROR, _("\
+Target doesn't support breakpoints that have target side commands."));
+
+  return memory_insert_breakpoint (ops, gdbarch, bp_tgt);
+}
+
+static int
 remote_remove_breakpoint (struct target_ops *ops,
 			  struct gdbarch *gdbarch,
 			  struct bp_target_info *bp_tgt,
@@ -13526,6 +13592,7 @@ Specify the serial device it is connected to\n\
   remote_ops.to_prepare_to_store = remote_prepare_to_store;
   remote_ops.to_files_info = remote_files_info;
   remote_ops.to_insert_breakpoint = remote_insert_breakpoint;
+  remote_ops.to_insert_fast_conditional_breakpoint = remote_insert_fast_conditional_breakpoint;
   remote_ops.to_remove_breakpoint = remote_remove_breakpoint;
   remote_ops.to_stopped_by_sw_breakpoint = remote_stopped_by_sw_breakpoint;
   remote_ops.to_supports_stopped_by_sw_breakpoint = remote_supports_stopped_by_sw_breakpoint;

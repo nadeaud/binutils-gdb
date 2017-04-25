@@ -2110,6 +2110,19 @@ target_insert_breakpoint (struct gdbarch *gdbarch,
 					      gdbarch, bp_tgt);
 }
 
+int
+target_insert_fast_conditional_breakpoint (struct gdbarch *gdbarch,
+					   struct bp_target_info *bp_tgt)
+{
+  if (!may_insert_breakpoints)
+    {
+      warning (_("May not insert breakpoints"));
+      return 1;
+    }
+  return current_target.to_insert_fast_conditional_breakpoint (&current_target,
+							       gdbarch, bp_tgt);
+}
+
 /* See target.h.  */
 
 int

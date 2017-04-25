@@ -178,4 +178,7 @@ CORE_ADDR get_get_tsv_func_addr (void);
    function in the IPA.  */
 CORE_ADDR get_set_tsv_func_addr (void);
 
+int install_fast_conditional_breakpoint (struct gdb_breakpoint *tpoint, int ins_size, CORE_ADDR where);
+
+
 #endif /* TRACEPOINT_H */

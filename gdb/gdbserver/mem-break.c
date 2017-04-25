@@ -22,8 +22,6 @@
 #include "regcache.h"
 #include "ax.h"
 
-#define MAX_BREAKPOINT_LEN 8
-
 /* Helper macro used in loops that append multiple items to a singly-linked
    list instead of inserting items at the head of the list, as, say, in the
    breakpoint lists.  LISTPP is a pointer to the pointer that is the head of
@@ -81,76 +79,6 @@
    them will point to the same raw breakpoint, which is reference
    counted.  */
 
-/* The low level, physical, raw breakpoint.  */
-struct raw_breakpoint
-{
-  struct raw_breakpoint *next;
-
-  /* The low level type of the breakpoint (software breakpoint,
-     watchpoint, etc.)  */
-  enum raw_bkpt_type raw_type;
-
-  /* A reference count.  Each high level breakpoint referencing this
-     raw breakpoint accounts for one reference.  */
-  int refcount;
-
-  /* The breakpoint's insertion address.  There can only be one raw
-     breakpoint for a given PC.  */
-  CORE_ADDR pc;
-
-  /* The breakpoint's kind.  This is target specific.  Most
-     architectures only use one specific instruction for breakpoints, while
-     others may use more than one.  E.g., on ARM, we need to use different
-     breakpoint instructions on Thumb, Thumb-2, and ARM code.  Likewise for
-     hardware breakpoints -- some architectures (including ARM) need to
-     setup debug registers differently depending on mode.  */
-  int kind;
-
-  /* The breakpoint's shadow memory.  */
-  unsigned char old_data[MAX_BREAKPOINT_LEN];
-
-  /* Positive if this breakpoint is currently inserted in the
-     inferior.  Negative if it was, but we've detected that it's now
-     gone.  Zero if not inserted.  */
-  int inserted;
-};
-
-/* The type of a breakpoint.  */
-enum bkpt_type
-  {
-    /* A GDB breakpoint, requested with a Z0 packet.  */
-    gdb_breakpoint_Z0,
-
-    /* A GDB hardware breakpoint, requested with a Z1 packet.  */
-    gdb_breakpoint_Z1,
-
-    /* A GDB write watchpoint, requested with a Z2 packet.  */
-    gdb_breakpoint_Z2,
-
-    /* A GDB read watchpoint, requested with a Z3 packet.  */
-    gdb_breakpoint_Z3,
-
-    /* A GDB access watchpoint, requested with a Z4 packet.  */
-    gdb_breakpoint_Z4,
-
-    /* A software single-step breakpoint.  */
-    single_step_breakpoint,
-
-    /* Any other breakpoint type that doesn't require specific
-       treatment goes here.  E.g., an event breakpoint.  */
-    other_breakpoint,
-  };
-
-struct point_cond_list
-{
-  /* Pointer to the agent expression that is the breakpoint's
-     conditional.  */
-  struct agent_expr *cond;
-
-  /* Pointer to the next condition.  */
-  struct point_cond_list *next;
-};
-
 struct point_command_list
 {
   /* Pointer to the agent expression that is the breakpoint's
@@ -163,35 +91,6 @@ struct point_command_list
 
   /* Pointer to the next command.  */
   struct point_command_list *next;
-};
-
-/* A high level (in gdbserver's perspective) breakpoint.  */
-struct breakpoint
-{
-  struct breakpoint *next;
-
-  /* The breakpoint's type.  */
-  enum bkpt_type type;
-
-  /* Link to this breakpoint's raw breakpoint.  This is always
-     non-NULL.  */
-  struct raw_breakpoint *raw;
-};
-
-/* Breakpoint requested by GDB.  */
-
-struct gdb_breakpoint
-{
-  struct breakpoint base;
-
-  /* Pointer to the condition list that should be evaluated on
-     the target or NULL if the breakpoint is unconditional or
-     if GDB doesn't want us to evaluate the conditionals on the
-     target's side.  */
-  struct point_cond_list *cond_list;
-
-  /* Point to the list of commands to run when this is hit.  */
-  struct point_command_list *command_list;
 };
 
 /* Breakpoint used by GDBserver.  */
@@ -215,6 +114,28 @@ struct single_step_breakpoint
   /* Thread the reinsert breakpoint belongs to.  */
   ptid_t ptid;
 };
+
+struct agent_expr *
+get_first_agent_expr (struct gdb_breakpoint *bp)
+{
+  if (bp == NULL)
+    return NULL;
+  if (bp->cond_list == NULL)
+    return NULL;
+  return bp->cond_list->cond;
+}
+
+void
+set_compiled_condition_address (struct gdb_breakpoint *bp, CORE_ADDR addr)
+{
+  bp->compiled_condition = addr;
+}
+
+CORE_ADDR
+get_compiled_condition_address (struct gdb_breakpoint *bp)
+{
+  return bp->compiled_condition;
+}
 
 /* Return the breakpoint size from its kind.  */
 
@@ -285,6 +206,8 @@ Z_packet_to_raw_bkpt_type (char z_type)
       return raw_bkpt_type_read_wp;
     case Z_PACKET_ACCESS_WP:
       return raw_bkpt_type_access_wp;
+    case Z_PACKET_FAST_COND_BP:
+      return raw_bkpt_type_fast_conditional;
     default:
       gdb_assert_not_reached ("unhandled Z packet type.");
     }
@@ -299,7 +222,8 @@ is_gdb_breakpoint (enum bkpt_type type)
 	  || type == gdb_breakpoint_Z1
 	  || type == gdb_breakpoint_Z2
 	  || type == gdb_breakpoint_Z3
-	  || type == gdb_breakpoint_Z4);
+	  || type == gdb_breakpoint_Z4
+	  || type == fast_conditional_breakpoint);
 }
 
 int
@@ -847,6 +771,21 @@ set_breakpoint (enum bkpt_type type, enum raw_bkpt_type raw_type,
   return bp;
 }
 
+struct gdb_breakpoint *
+set_fast_conditional_breakpoint (CORE_ADDR address)
+{
+  struct gdb_breakpoint *gdb_bp = XCNEW (struct gdb_breakpoint);
+  gdb_bp->base.type = fast_conditional_breakpoint;
+  gdb_bp->base.raw = XCNEW (struct raw_breakpoint);
+
+  gdb_bp->base.raw->pc = address;
+  gdb_bp->base.next = NULL;
+  gdb_bp->base.raw->next = NULL;
+  gdb_bp->base.raw->raw_type = raw_bkpt_type_fast_conditional;
+
+  return gdb_bp;
+}
+
 /* Set breakpoint of TYPE on address WHERE with handler HANDLER.  */
 
 static struct breakpoint *
@@ -868,6 +807,12 @@ struct breakpoint *
 set_breakpoint_at (CORE_ADDR where, int (*handler) (CORE_ADDR))
 {
   return set_breakpoint_type_at (other_breakpoint, where, handler);
+}
+
+struct breakpoint *
+set_normal_breakpoint_at (CORE_ADDR where)
+{
+  return set_breakpoint_type_at (gdb_breakpoint_Z0, where, NULL);
 }
 
 

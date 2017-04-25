@@ -1275,6 +1275,188 @@ amd64_install_fast_tracepoint_jump_pad (CORE_ADDR tpoint, CORE_ADDR tpaddr,
   return 0;
 }
 
+static int
+amd64_install_conditional_breakpoint_jump_pad (CORE_ADDR bpoint, CORE_ADDR tpaddr,
+					CORE_ADDR collector,
+					CORE_ADDR lockaddr,
+					ULONGEST orig_size,
+					CORE_ADDR *jump_entry,
+					CORE_ADDR *trampoline,
+					ULONGEST *trampoline_size,
+					unsigned char *jjump_pad_insn,
+					ULONGEST *jjump_pad_insn_size,
+					CORE_ADDR *adjusted_insn_addr,
+					CORE_ADDR *adjusted_insn_addr_end,
+					char *err)
+{
+  unsigned char buf[40];
+  int i, offset;
+  int64_t loffset;
+
+  CORE_ADDR buildaddr = *jump_entry;
+
+  /* Build the jump pad.  */
+
+  /* First, do tracepoint data collection.  Save registers.  */
+  i = 0;
+  /* Need to ensure stack pointer saved first.  */
+  buf[i++] = 0x54; /* push %rsp */
+  buf[i++] = 0x55; /* push %rbp */
+  buf[i++] = 0x57; /* push %rdi */
+  buf[i++] = 0x56; /* push %rsi */
+  buf[i++] = 0x52; /* push %rdx */
+  buf[i++] = 0x51; /* push %rcx */
+  buf[i++] = 0x53; /* push %rbx */
+  buf[i++] = 0x50; /* push %rax */
+  buf[i++] = 0x41; buf[i++] = 0x57; /* push %r15 */
+  buf[i++] = 0x41; buf[i++] = 0x56; /* push %r14 */
+  buf[i++] = 0x41; buf[i++] = 0x55; /* push %r13 */
+  buf[i++] = 0x41; buf[i++] = 0x54; /* push %r12 */
+  buf[i++] = 0x41; buf[i++] = 0x53; /* push %r11 */
+  buf[i++] = 0x41; buf[i++] = 0x52; /* push %r10 */
+  buf[i++] = 0x41; buf[i++] = 0x51; /* push %r9 */
+  buf[i++] = 0x41; buf[i++] = 0x50; /* push %r8 */
+  buf[i++] = 0x9c; /* pushfq */
+  buf[i++] = 0x48; /* movabs <addr>,%rdi */
+  buf[i++] = 0xbf;
+  memcpy (buf + i, &tpaddr, 8);
+  i += 8;
+  buf[i++] = 0x57; /* push %rdi */
+  append_insns (&buildaddr, i, buf);
+
+  /* Stack space for the collecting_t object.  */
+  i = 0;
+  i += push_opcode (&buf[i], "48 83 ec 18");	/* sub $0x18,%rsp */
+  i += push_opcode (&buf[i], "48 b8");          /* mov <tpoint>,%rax */
+  memcpy (buf + i, &bpoint, 8);
+  i += 8;
+  i += push_opcode (&buf[i], "48 89 04 24");    /* mov %rax,(%rsp) */
+  i += push_opcode (&buf[i],
+		    "64 48 8b 04 25 00 00 00 00"); /* mov %fs:0x0,%rax */
+  i += push_opcode (&buf[i], "48 89 44 24 08"); /* mov %rax,0x8(%rsp) */
+  append_insns (&buildaddr, i, buf);
+
+  /* spin-lock.  */
+  i = 0;
+  i += push_opcode (&buf[i], "48 be");		/* movl <lockaddr>,%rsi */
+  memcpy (&buf[i], (void *) &lockaddr, 8);
+  i += 8;
+  i += push_opcode (&buf[i], "48 89 e1");       /* mov %rsp,%rcx */
+  i += push_opcode (&buf[i], "31 c0");		/* xor %eax,%eax */
+  i += push_opcode (&buf[i], "f0 48 0f b1 0e"); /* lock cmpxchg %rcx,(%rsi) */
+  i += push_opcode (&buf[i], "48 85 c0");	/* test %rax,%rax */
+  i += push_opcode (&buf[i], "75 f4");		/* jne <again> */
+  append_insns (&buildaddr, i, buf);
+
+  /* Set up the gdb_collect call.  */
+  /* At this point, (stack pointer + 0x18) is the base of our saved
+     register block.  */
+
+  i = 0;
+  i += push_opcode (&buf[i], "48 89 e6");	/* mov %rsp,%rsi */
+  i += push_opcode (&buf[i], "48 83 c6 18");	/* add $0x18,%rsi */
+
+  /* tpoint address may be 64-bit wide.  */
+  i += push_opcode (&buf[i], "48 bf");		/* movl <addr>,%rdi */
+  memcpy (buf + i, &bpoint, 8);
+  i += 8;
+  append_insns (&buildaddr, i, buf);
+
+  /* The collector function being in the shared library, may be
+     >31-bits away off the jump pad.  */
+  i = 0;
+  i += push_opcode (&buf[i], "48 b8");          /* mov $collector,%rax */
+  memcpy (buf + i, &collector, 8);
+  i += 8;
+  i += push_opcode (&buf[i], "ff d0");          /* callq *%rax */
+  append_insns (&buildaddr, i, buf);
+
+  /* Clear the spin-lock.  */
+  i = 0;
+  i += push_opcode (&buf[i], "31 c0");		/* xor %eax,%eax */
+  i += push_opcode (&buf[i], "48 a3");		/* mov %rax, lockaddr */
+  memcpy (buf + i, &lockaddr, 8);
+  i += 8;
+  append_insns (&buildaddr, i, buf);
+
+  /* Remove stack that had been used for the collect_t object.  */
+  i = 0;
+  i += push_opcode (&buf[i], "48 83 c4 18");	/* add $0x18,%rsp */
+  append_insns (&buildaddr, i, buf);
+
+  /* Restore register state.  */
+  i = 0;
+  buf[i++] = 0x48; /* add $0x8,%rsp */
+  buf[i++] = 0x83;
+  buf[i++] = 0xc4;
+  buf[i++] = 0x08;
+  buf[i++] = 0x9d; /* popfq */
+  buf[i++] = 0x41; buf[i++] = 0x58; /* pop %r8 */
+  buf[i++] = 0x41; buf[i++] = 0x59; /* pop %r9 */
+  buf[i++] = 0x41; buf[i++] = 0x5a; /* pop %r10 */
+  buf[i++] = 0x41; buf[i++] = 0x5b; /* pop %r11 */
+  buf[i++] = 0x41; buf[i++] = 0x5c; /* pop %r12 */
+  buf[i++] = 0x41; buf[i++] = 0x5d; /* pop %r13 */
+  buf[i++] = 0x41; buf[i++] = 0x5e; /* pop %r14 */
+  buf[i++] = 0x41; buf[i++] = 0x5f; /* pop %r15 */
+  buf[i++] = 0x58; /* pop %rax */
+  buf[i++] = 0x5b; /* pop %rbx */
+  buf[i++] = 0x59; /* pop %rcx */
+  buf[i++] = 0x5a; /* pop %rdx */
+  buf[i++] = 0x5e; /* pop %rsi */
+  buf[i++] = 0x5f; /* pop %rdi */
+  buf[i++] = 0x5d; /* pop %rbp */
+  buf[i++] = 0x5c; /* pop %rsp */
+  append_insns (&buildaddr, i, buf);
+
+  /* Now, adjust the original instruction to execute in the jump
+     pad.  */
+  *adjusted_insn_addr = buildaddr;
+  relocate_instruction (&buildaddr, tpaddr);
+  *adjusted_insn_addr_end = buildaddr;
+
+  /* Finally, write a jump back to the program.  */
+
+  loffset = (tpaddr + orig_size) - (buildaddr + sizeof (jump_insn));
+  if (loffset > INT_MAX || loffset < INT_MIN)
+    {
+      sprintf (err,
+	       "E.Jump back from jump pad too far from tracepoint "
+	       "(offset 0x%" PRIx64 " > int32).", loffset);
+      return 1;
+    }
+
+  offset = (int) loffset;
+  memcpy (buf, jump_insn, sizeof (jump_insn));
+  memcpy (buf + 1, &offset, 4);
+  append_insns (&buildaddr, sizeof (jump_insn), buf);
+
+  /* The jump pad is now built.  Wire in a jump to our jump pad.  This
+     is always done last (by our caller actually), so that we can
+     install fast tracepoints with threads running.  This relies on
+     the agent's atomic write support.  */
+  loffset = *jump_entry - (tpaddr + sizeof (jump_insn));
+  if (loffset > INT_MAX || loffset < INT_MIN)
+    {
+      sprintf (err,
+	       "E.Jump pad too far from tracepoint "
+	       "(offset 0x%" PRIx64 " > int32).", loffset);
+      return 1;
+    }
+
+  offset = (int) loffset;
+
+  memcpy (buf, jump_insn, sizeof (jump_insn));
+  memcpy (buf + 1, &offset, 4);
+  memcpy (jjump_pad_insn, buf, sizeof (jump_insn));
+  *jjump_pad_insn_size = sizeof (jump_insn);
+
+  /* Return the end address of our pad.  */
+  *jump_entry = buildaddr;
+
+  return 0;
+}
+
 #endif /* __x86_64__ */
 
 /* Build a jump pad that saves registers and calls a collection
@@ -1501,6 +1683,37 @@ x86_install_fast_tracepoint_jump_pad (CORE_ADDR tpoint, CORE_ADDR tpaddr,
 						adjusted_insn_addr,
 						adjusted_insn_addr_end,
 						err);
+}
+
+static int
+x86_install_conditional_breakpoint_jump_pad (CORE_ADDR bpoint, CORE_ADDR tpaddr,
+					      CORE_ADDR collector,
+					      CORE_ADDR lockaddr,
+					      ULONGEST orig_size,
+					      CORE_ADDR *jump_entry,
+					      CORE_ADDR *trampoline,
+					      ULONGEST *trampoline_size,
+					      unsigned char *jjump_pad_insn,
+					      ULONGEST *jjump_pad_insn_size,
+					      CORE_ADDR *adjusted_insn_addr,
+					      CORE_ADDR *adjusted_insn_addr_end,
+					      char *err)
+{
+#ifdef __x86_64__
+  if (is_64bit_tdesc ())
+    return amd64_install_conditional_breakpoint_jump_pad (bpoint, tpaddr,
+						   collector, lockaddr,
+						   orig_size, jump_entry,
+						   trampoline, trampoline_size,
+						   jjump_pad_insn,
+						   jjump_pad_insn_size,
+						   adjusted_insn_addr,
+						   adjusted_insn_addr_end,
+						   err);
+  return 1;
+#endif
+
+  return -1;
 }
 
 /* Return the minimum instruction length for fast tracepoints on x86/x86-64
@@ -2974,6 +3187,7 @@ struct linux_target_ops the_low_target =
   x86_supports_hardware_single_step,
   x86_get_syscall_trapinfo,
   x86_get_ipa_tdesc_idx,
+  x86_install_conditional_breakpoint_jump_pad,
 };
 
 void

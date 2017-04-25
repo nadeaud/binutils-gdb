@@ -21,6 +21,8 @@
 #ifndef MEM_BREAK_H
 #define MEM_BREAK_H
 
+#define MAX_BREAKPOINT_LEN 8
+
 #include "break-common.h"
 
 /* Breakpoints are opaque.  */
@@ -35,6 +37,7 @@ struct process_info;
 #define Z_PACKET_WRITE_WP '2'
 #define Z_PACKET_READ_WP '3'
 #define Z_PACKET_ACCESS_WP '4'
+#define Z_PACKET_FAST_COND_BP '5'
 
 /* The low level breakpoint types.  */
 
@@ -53,8 +56,119 @@ enum raw_bkpt_type
     raw_bkpt_type_read_wp,
 
     /* Hardware-assisted access watchpoint.  */
-    raw_bkpt_type_access_wp
+    raw_bkpt_type_access_wp,
+
+    /* Fast conditional breakpoint using the IPA library.  */
+    raw_bkpt_type_fast_conditional
   };
+
+/* The type of a breakpoint.  */
+enum bkpt_type
+  {
+    /* A GDB breakpoint, requested with a Z0 packet.  */
+    gdb_breakpoint_Z0,
+
+    /* A GDB hardware breakpoint, requested with a Z1 packet.  */
+    gdb_breakpoint_Z1,
+
+    /* A GDB write watchpoint, requested with a Z2 packet.  */
+    gdb_breakpoint_Z2,
+
+    /* A GDB read watchpoint, requested with a Z3 packet.  */
+    gdb_breakpoint_Z3,
+
+    /* A GDB access watchpoint, requested with a Z4 packet.  */
+    gdb_breakpoint_Z4,
+
+    /* A software single-step breakpoint.  */
+    single_step_breakpoint,
+
+    /* A fast conditional breakpoint. */
+    fast_conditional_breakpoint,
+
+    /* Any other breakpoint type that doesn't require specific
+       treatment goes here.  E.g., an event breakpoint.  */
+    other_breakpoint,
+  };
+
+/* The low level, physical, raw breakpoint.  */
+struct raw_breakpoint
+{
+  struct raw_breakpoint *next;
+
+  /* The low level type of the breakpoint (software breakpoint,
+     watchpoint, etc.)  */
+  enum raw_bkpt_type raw_type;
+
+  /* A reference count.  Each high level breakpoint referencing this
+     raw breakpoint accounts for one reference.  */
+  int refcount;
+
+  /* The breakpoint's insertion address.  There can only be one raw
+     breakpoint for a given PC.  */
+  CORE_ADDR pc;
+
+  /* The breakpoint's kind.  This is target specific.  Most
+     architectures only use one specific instruction for breakpoints, while
+     others may use more than one.  E.g., on ARM, we need to use different
+     breakpoint instructions on Thumb, Thumb-2, and ARM code.  Likewise for
+     hardware breakpoints -- some architectures (including ARM) need to
+     setup debug registers differently depending on mode.  */
+  int kind;
+
+  /* The breakpoint's shadow memory.  */
+  unsigned char old_data[MAX_BREAKPOINT_LEN];
+
+  /* Positive if this breakpoint is currently inserted in the
+     inferior.  Negative if it was, but we've detected that it's now
+     gone.  Zero if not inserted.  */
+  int inserted;
+};
+
+struct point_cond_list
+{
+  /* Pointer to the agent expression that is the breakpoint's
+     conditional.  */
+  struct agent_expr *cond;
+
+  /* Pointer to the next condition.  */
+  struct point_cond_list *next;
+};
+
+/* A high level (in gdbserver's perspective) breakpoint.  */
+struct breakpoint
+{
+  struct breakpoint *next;
+
+  /* The breakpoint's type.  */
+  enum bkpt_type type;
+
+  /* Link to this breakpoint's raw breakpoint.  This is always
+     non-NULL.  */
+  struct raw_breakpoint *raw;
+};
+
+/* Breakpoint requested by GDB.  */
+
+struct gdb_breakpoint
+{
+  struct breakpoint base;
+
+  struct agent_expr *cond;
+
+  /* Pointer to the condition list that should be evaluated on
+     the target or NULL if the breakpoint is unconditional or
+     if GDB doesn't want us to evaluate the conditionals on the
+     target's side.  */
+  struct point_cond_list *cond_list;
+
+  /* Point to the list of commands to run when this is hit.  */
+  struct point_command_list *command_list;
+
+  CORE_ADDR compiled_condition;
+
+  CORE_ADDR addr_obj_on_target;
+};
 
 /* Map the protocol breakpoint/watchpoint type Z_TYPE to the internal
    raw breakpoint type.  */
@@ -147,6 +261,8 @@ int gdb_breakpoint_here (CORE_ADDR where);
 
 struct breakpoint *set_breakpoint_at (CORE_ADDR where,
 				      int (*handler) (CORE_ADDR));
+
+struct breakpoint *set_normal_breakpoint_at (CORE_ADDR where);
 
 /* Delete a breakpoint.  */
 
@@ -273,5 +389,13 @@ int remove_memory_breakpoint (struct raw_breakpoint *bp);
 
 void clone_all_breakpoints (struct thread_info *child_thread,
 			    const struct thread_info *parent_thread);
+
+struct gdb_breakpoint * set_fast_conditional_breakpoint (CORE_ADDR address);
+
+struct agent_expr * get_first_agent_expr (struct gdb_breakpoint *bp);
+
+void set_compiled_condition_address (struct gdb_breakpoint *bp, CORE_ADDR addr);
+
+CORE_ADDR get_compiled_condition_address (struct gdb_breakpoint *bp);
 
 #endif /* MEM_BREAK_H */

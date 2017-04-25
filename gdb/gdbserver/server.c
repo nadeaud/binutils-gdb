@@ -18,6 +18,7 @@
 
 #include "server.h"
 #include "gdbthread.h"
+#include "mem-break.h"
 #include "agent.h"
 #include "notif.h"
 #include "tdesc.h"
@@ -4233,18 +4234,66 @@ process_serial_event (void)
 	  {
 	    struct gdb_breakpoint *bp;
 
-	    bp = set_gdb_breakpoint (type, addr, kind, &res);
-	    if (bp != NULL)
+	    printf("packet received : %s\n", own_buf);
+	    if (type == Z_PACKET_FAST_COND_BP)
 	      {
-		res = 0;
+		//struct gdb_breakpoint *bp;
+		char *head = own_buf + 3;
+		int length = 0;
+		while (*head)
+		  {
+		    if (*head == 'F')
+		      {
+			length = atoi(((const char *)(++head)));
+			break;
+		      }
+		    head++;
+		  }
+		printf("Insert fast conditional breakpoint.\n");
+		printf("len = %d\n", length);
 
-		/* GDB may have sent us a list of *point parameters to
-		   be evaluated on the target's side.  Read such list
-		   here.  If we already have a list of parameters, GDB
-		   is telling us to drop that list and use this one
-		   instead.  */
+		if (!agent_loaded_p())
+		  res = 1;
+		else
+		  {
+		    printf("Agent Loaded\n");
+		    bp = set_fast_conditional_breakpoint (addr);
+		    process_point_options (bp, &dataptr);
+		    install_fast_conditional_breakpoint (bp, length, addr);
+		    res = 0;
+		    //xfree (bp);
+		/*
+		bp = XNEW(struct breakpoint);
 		clear_breakpoint_conditions_and_commands (bp);
 		process_point_options (bp, &dataptr);
+
+		if (bp->cond_list != NULL)
+		  {
+
+		  }
+		else
+		  {
+		    free (bp);
+		    res = 1;
+		  }
+		  */
+		  }
+	      }
+	    else
+	      {
+		bp = set_gdb_breakpoint (type, addr, kind, &res);
+		if (bp != NULL)
+		  {
+		    res = 0;
+
+		    /* GDB may have sent us a list of *point parameters to
+				   be evaluated on the target's side.  Read such list
+				   here.  If we already have a list of parameters, GDB
+				   is telling us to drop that list and use this one
+				   instead.  */
+		    clear_breakpoint_conditions_and_commands (bp);
+		    process_point_options (bp, &dataptr);
+		  }
 	      }
 	  }
 	else

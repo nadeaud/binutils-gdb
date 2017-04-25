@@ -266,6 +266,13 @@ delegate_insert_breakpoint (struct target_ops *self, struct gdbarch *arg1, struc
 }
 
 static int
+delegate_insert_fast_conditional_breakpoint (struct target_ops *self, struct gdbarch *arg1, struct bp_target_info *arg2)
+{
+  self = self->beneath;
+  return self->to_insert_fast_conditional_breakpoint (self, arg1, arg2);
+}
+
+static int
 debug_insert_breakpoint (struct target_ops *self, struct gdbarch *arg1, struct bp_target_info *arg2)
 {
   int result;
@@ -4173,6 +4180,8 @@ install_delegators (struct target_ops *ops)
     ops->to_files_info = delegate_files_info;
   if (ops->to_insert_breakpoint == NULL)
     ops->to_insert_breakpoint = delegate_insert_breakpoint;
+  if (ops->to_insert_fast_conditional_breakpoint == NULL)
+    ops->to_insert_fast_conditional_breakpoint = delegate_insert_fast_conditional_breakpoint;
   if (ops->to_remove_breakpoint == NULL)
     ops->to_remove_breakpoint = delegate_remove_breakpoint;
   if (ops->to_stopped_by_sw_breakpoint == NULL)

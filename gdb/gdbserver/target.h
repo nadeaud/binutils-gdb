@@ -474,6 +474,19 @@ struct target_ops
 
   /* Return tdesc index for IPA.  */
   int (*get_ipa_tdesc_idx) (void);
+
+  int (*install_conditional_breakpoint_jump_pad) (CORE_ADDR bp, CORE_ADDR tpaddr,
+  					   CORE_ADDR collector,
+  					   CORE_ADDR lockaddr,
+  					   ULONGEST orig_size,
+  					   CORE_ADDR *jump_entry,
+  					   CORE_ADDR *trampoline,
+  					   ULONGEST *trampoline_size,
+  					   unsigned char *jjump_pad_insn,
+  					   ULONGEST *jjump_pad_insn_size,
+  					   CORE_ADDR *adjusted_insn_addr,
+  					   CORE_ADDR *adjusted_insn_addr_end,
+  					   char *err);
 };
 
 extern struct target_ops *the_target;
@@ -596,6 +609,27 @@ int kill_inferior (int);
 					 adjusted_insn_addr_end,	\
 					 err)				\
   (*the_target->install_fast_tracepoint_jump_pad) (tpoint, tpaddr,	\
+						   collector,lockaddr,	\
+						   orig_size, jump_entry, \
+						   trampoline,		\
+						   trampoline_size,	\
+						   jjump_pad_insn,	\
+						   jjump_pad_insn_size, \
+						   adjusted_insn_addr,	\
+						   adjusted_insn_addr_end, \
+						   err)
+
+#define install_conditional_breakpoint_jump_pad(bpoint, tpaddr,		\
+					 collector, lockaddr,		\
+					 orig_size,			\
+					 jump_entry,			\
+					 trampoline, trampoline_size,	\
+					 jjump_pad_insn,		\
+					 jjump_pad_insn_size,		\
+					 adjusted_insn_addr,		\
+					 adjusted_insn_addr_end,	\
+					 err)				\
+  (*the_target->install_conditional_breakpoint_jump_pad) (bpoint, tpaddr,	\
 						   collector,lockaddr,	\
 						   orig_size, jump_entry, \
 						   trampoline,		\

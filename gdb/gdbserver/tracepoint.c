@@ -97,6 +97,9 @@ trace_vdebug (const char *fmt, ...)
 #define trace_debug(FMT, args...)		\
   trace_debug_1 (1, FMT, ##args)
 
+/* Align V up to N bits.  */
+#define UALIGN(V, N) (((V) + ((N) - 1)) & ~((N) - 1))
+
 /* Prefix exported symbols, for good citizenship.  All the symbols
    that need exporting are defined in this module.  Note that all
    these symbols must be tagged with IP_AGENT_EXPORT_*.  */
@@ -135,6 +138,9 @@ trace_vdebug (const char *fmt, ...)
 # define helper_thread_id IPA_SYM_EXPORTED_NAME (helper_thread_id)
 # define cmd_buf IPA_SYM_EXPORTED_NAME (cmd_buf)
 # define ipa_tdesc_idx IPA_SYM_EXPORTED_NAME (ipa_tdesc_idx)
+# define conditional_stop_ptr IPA_SYM_EXPORTED_NAME (conditional_stop_ptr)
+# define conditional_stopping IPA_SYM_EXPORTED_NAME (conditional_stopping)
+# define stop_conditional_bp IPA_SYM_EXPORTED_NAME (stop_conditional_bp)
 #endif
 
 #ifndef IN_PROCESS_AGENT
@@ -173,6 +179,9 @@ struct ipa_sym_addresses
   CORE_ADDR addr_set_trace_state_variable_value_ptr;
   CORE_ADDR addr_ust_loaded;
   CORE_ADDR addr_ipa_tdesc_idx;
+  CORE_ADDR addr_conditional_stop_ptr;
+  CORE_ADDR addr_conditional_stopping;
+  CORE_ADDR addr_stop_conditional_bp;
 };
 
 static struct
@@ -210,6 +219,9 @@ static struct
   IPA_SYM(set_trace_state_variable_value_ptr),
   IPA_SYM(ust_loaded),
   IPA_SYM(ipa_tdesc_idx),
+  IPA_SYM(conditional_stop_ptr),
+  IPA_SYM(conditional_stopping),
+  IPA_SYM(stop_conditional_bp),
 };
 
 static struct ipa_sym_addresses ipa_sym_addrs;
@@ -382,6 +394,12 @@ flush_trace_buffer (void)
   UNKNOWN_SIDE_EFFECTS();
 }
 
+IP_AGENT_EXPORT_FUNC void
+stop_conditional_bp (void)
+{
+  UNKNOWN_SIDE_EFFECTS();
+}
+
 #endif
 
 #ifndef IN_PROCESS_AGENT
@@ -399,6 +417,7 @@ static int stop_tracing_handler (CORE_ADDR);
 
 /* Breakpoint at "flush_trace_buffer" in the inferior lib.  */
 struct breakpoint *flush_trace_buffer_bkpt;
+struct breakpoint *stop_conditional_bp_bkpt;
 static int flush_trace_buffer_handler (CORE_ADDR);
 
 static void download_trace_state_variables (void);
@@ -3136,6 +3155,33 @@ install_fast_tracepoint (struct tracepoint *tpoint, char *errbuf)
   return 0;
 }
 
+static void
+compile_fast_breakpoint_condition (struct gdb_breakpoint *bp,
+				   CORE_ADDR *jump_entry)
+{
+  CORE_ADDR entry_point = *jump_entry;
+  enum eval_result_type err;
+
+  current_insn_ptr = *jump_entry;
+
+  emit_prologue ();
+
+  err = compile_bytecodes (get_first_agent_expr (bp));
+
+  if (err == expr_eval_no_error)
+    {
+      emit_epilogue ();
+
+      set_compiled_condition_address (bp, entry_point);
+    }
+  else
+    {
+      set_compiled_condition_address (bp, 0);
+    }
+
+  *jump_entry = current_insn_ptr;
+  *jump_entry += 16;
+}
 
 /* Install tracepoint TPOINT, and write reply message in OWN_BUF.  */
 
@@ -5797,6 +5843,10 @@ EXTERN_C_PUSH
 IP_AGENT_EXPORT_VAR collecting_t *collecting;
 EXTERN_C_POP
 
+EXTERN_C_PUSH
+IP_AGENT_EXPORT_VAR collecting_t *conditional_stopping;
+EXTERN_C_POP
+
 /* This routine, called from the jump pad (in asm) is designed to be
    called from the jump pads of fast tracepoints, thus it is on the
    critical path.  */
@@ -5870,6 +5920,49 @@ gdb_collect (struct tracepoint *tpoint, unsigned char *regs)
     }
 }
 
+IP_AGENT_EXPORT_FUNC void
+conditional_stop (struct gdb_breakpoint *bpoint, unsigned char *regs)
+{
+ // printf("Function called !!!\n");
+  struct fast_tracepoint_ctx ctx;
+  struct tracepoint tpoint;
+  const struct target_desc *ipa_tdesc;
+
+  ipa_tdesc = get_ipa_tdesc (ipa_tdesc_idx);
+
+  tpoint.number = 1;
+  tpoint.cond = bpoint->cond;
+  tpoint.compiled_cond = bpoint->compiled_condition;
+  tpoint.address = 0;
+
+  ctx.base.type = fast_tracepoint;
+  ctx.regs = regs;
+  ctx.regcache_initted = 0;
+  ctx.tpoint = &tpoint;
+
+  ctx.regspace = (unsigned char *) alloca (ipa_tdesc->registers_size);
+
+  if (bpoint->cond != NULL)
+    {
+      if (condition_true_at_tracepoint ((struct tracepoint_hit_ctx *)&ctx,
+					ctx.tpoint))
+	{
+	  printf("condition true\n");
+	  stop_conditional_bp ();
+
+	}
+      else
+	{
+	  printf("condition false\n");
+	}
+    }
+  else
+    {
+      printf("No condition...\n");
+    }
+
+}
+
 /* These global variables points to the corresponding functions.  This is
    necessary on powerpc64, where asking for function symbol address from gdb
    results in returning the actual code pointer, instead of the descriptor
@@ -5879,6 +5972,7 @@ typedef void (*gdb_collect_ptr_type) (struct tracepoint *, unsigned char *);
 typedef ULONGEST (*get_raw_reg_ptr_type) (const unsigned char *, int);
 typedef LONGEST (*get_trace_state_variable_value_ptr_type) (int);
 typedef void (*set_trace_state_variable_value_ptr_type) (int, LONGEST);
+typedef void (*conditional_stop_ptr_type) (struct gdb_breakpoint *, unsigned char *);
 
 EXTERN_C_PUSH
 IP_AGENT_EXPORT_VAR gdb_collect_ptr_type gdb_collect_ptr = gdb_collect;
@@ -5887,6 +5981,7 @@ IP_AGENT_EXPORT_VAR get_trace_state_variable_value_ptr_type
   get_trace_state_variable_value_ptr = get_trace_state_variable_value;
 IP_AGENT_EXPORT_VAR set_trace_state_variable_value_ptr_type
   set_trace_state_variable_value_ptr = set_trace_state_variable_value;
+IP_AGENT_EXPORT_VAR conditional_stop_ptr_type conditional_stop_ptr = conditional_stop;
 EXTERN_C_POP
 
 #endif
@@ -6030,8 +6125,89 @@ download_agent_expr (struct agent_expr *expr)
   return expr_addr;
 }
 
-/* Align V up to N bits.  */
-#define UALIGN(V, N) (((V) + ((N) - 1)) & ~((N) - 1))
+int
+install_fast_conditional_breakpoint (struct gdb_breakpoint *tpoint, int ins_size, CORE_ADDR where)
+{
+  struct tracepoint tracepoint;
+  CORE_ADDR jentry, jump_entry;
+  CORE_ADDR trampoline;
+  CORE_ADDR conditional_stop;
+  CORE_ADDR bkpt = 0;
+  ULONGEST trampoline_size;
+  int err = 0;
+  char errbuf[256];
+
+  CORE_ADDR temp = get_compiled_condition_address (tpoint);
+  temp =  temp+1;
+
+  unsigned char fjump[MAX_JUMP_SIZE];
+  ULONGEST fjump_size;
+
+  if (ins_size < target_get_min_fast_tracepoint_insn_len ())
+    {
+      return -1;
+    }
+
+  if (read_inferior_data_pointer (ipa_sym_addrs.addr_conditional_stop_ptr,
+				  &conditional_stop))
+  {
+      error ("error extracting conditional_stop_ptr");
+      return -1;
+  }
+
+  jentry = jump_entry = get_jump_space_head ();
+
+  if (get_first_agent_expr (tpoint) != NULL && target_emit_ops() != NULL)
+    {
+      tpoint->cond = tpoint->cond_list->cond;
+      printf("Ready to insert conditions.\n");
+      jentry = UALIGN (jentry, 8);
+      compile_fast_breakpoint_condition (tpoint, &jentry);
+    }
+  jentry = UALIGN (jentry, 8);
+  claim_jump_space (jentry - jump_entry);
+
+  bkpt = target_malloc (sizeof (*tpoint));
+  tpoint->addr_obj_on_target = bkpt;
+
+  write_inferior_memory (bkpt, (unsigned char*) tpoint, sizeof(*tpoint));
+
+  if (tpoint->cond_list && tpoint->cond_list->cond)
+    write_inferior_data_pointer (bkpt + offsetof (struct gdb_breakpoint, cond),
+				 download_agent_expr (tpoint->cond));
+
+
+  jentry = jump_entry = get_jump_space_head ();
+
+  trampoline = 0;
+  trampoline_size = 0;
+
+  err = install_conditional_breakpoint_jump_pad (tpoint->addr_obj_on_target,
+					     where,
+					     conditional_stop,
+					     ipa_sym_addrs.addr_conditional_stopping,
+					     ins_size,
+					     &jentry,
+					     &trampoline, &trampoline_size,
+					     fjump, &fjump_size,
+					     &tracepoint.adjusted_insn_addr,
+					     &tracepoint.adjusted_insn_addr_end,
+					     errbuf);
+
+  if (err)
+      return 1;
+
+    /* Wire it in.  */
+    set_fast_tracepoint_jump (where, fjump, fjump_size);
+
+    stop_conditional_bp_bkpt
+    	= set_normal_breakpoint_at (ipa_sym_addrs.addr_stop_conditional_bp);
+
+    jentry = ((jentry + 7) & ~0x7);
+    claim_jump_space (jentry - jump_entry);
+
+    return 0;
+}
 
 /* Sync tracepoint with IPA, but leave maintenance of linked list to caller.  */
 

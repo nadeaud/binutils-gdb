@@ -6810,6 +6810,28 @@ linux_install_fast_tracepoint_jump_pad (CORE_ADDR tpoint, CORE_ADDR tpaddr,
      err);
 }
 
+static int
+linux_install_conditional_breakpoint_jump_pad (CORE_ADDR tpoint, CORE_ADDR tpaddr,
+						CORE_ADDR collector,
+						CORE_ADDR lockaddr,
+						ULONGEST orig_size,
+						CORE_ADDR *jump_entry,
+						CORE_ADDR *trampoline,
+						ULONGEST *trampoline_size,
+						unsigned char *jjump_pad_insn,
+						ULONGEST *jjump_pad_insn_size,
+						CORE_ADDR *adjusted_insn_addr,
+						CORE_ADDR *adjusted_insn_addr_end,
+						char *err)
+{
+  return (*the_low_target.install_conditional_breakpoint_jump_pad)
+      (tpoint, tpaddr, collector, lockaddr, orig_size,
+           jump_entry, trampoline, trampoline_size,
+           jjump_pad_insn, jjump_pad_insn_size,
+           adjusted_insn_addr, adjusted_insn_addr_end,
+           err);
+}
+
 static struct emit_ops *
 linux_emit_ops (void)
 {
@@ -7698,6 +7720,7 @@ static struct target_ops linux_target_ops = {
   linux_supports_software_single_step,
   linux_supports_catch_syscall,
   linux_get_ipa_tdesc_idx,
+  linux_install_conditional_breakpoint_jump_pad,
 };
 
 #ifdef HAVE_LINUX_REGSETS

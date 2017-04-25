@@ -189,6 +189,11 @@ enum bptype
        deleted now and the breakpoint moved to the target function entry
        point.  */
     bp_gnu_ifunc_resolver_return,
+
+    /* A fast conditional breakpoint that uses the In-Process agent to
+       evaluate the condition in the process space before triggering a
+       breakpoint.  */
+    bp_fast_conditional,
   };
 
 /* States of enablement of breakpoint.  */

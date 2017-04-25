@@ -554,6 +554,8 @@ gdb_evaluates_breakpoint_condition_p (void)
 
 void _initialize_breakpoint (void);
 
+static void insert_fast_contitional_breakpoint (struct breakpoint *b);
+
 /* Are we executing breakpoint commands?  */
 static int executing_breakpoint_commands;
 
@@ -568,6 +570,8 @@ int target_exact_watchpoints = 0;
    current breakpoint.  */
 
 #define ALL_BREAKPOINTS(B)  for (B = breakpoint_chain; B; B = B->next)
+
+#define ALL_FAST_COND_BREAKPOINTS(B) for(B = fast_conditional_breakpoints; B; B = B->next)
 
 #define ALL_BREAKPOINTS_SAFE(B,TMP)	\
 	for (B = breakpoint_chain;	\
@@ -607,9 +611,16 @@ int target_exact_watchpoints = 0;
 
 struct breakpoint *breakpoint_chain;
 
+/* Chains of all fast conditional breakpoints defined. */
+
+struct breakpoint *fast_conditional_breakpoints;
+
 /* Array is sorted by bp_location_compare - primarily by the ADDRESS.  */
 
 static struct bp_location **bp_location;
+
+/* Array of fast conditional breakpoints for now. To merge with the standard breakpoints. */
+static struct bp_location **bp_fast_conditional_location;
 
 /* Number of elements of BP_LOCATION.  */
 
@@ -2281,6 +2292,34 @@ parse_cond_to_aexpr (CORE_ADDR scope, struct expression *cond)
 
   /* We have a valid agent expression.  */
   return aexpr;
+}
+
+static void
+build_target_fast_condition_list (struct bp_location *bl)
+{
+  /* Release conditions left over from a previous insert.  */
+  bl->target_info.conditions.clear ();
+
+  /* This is only meaningful if the target is
+     evaluating conditions and if the user has
+     opted for condition evaluation on the target's
+     side.  */
+  if (gdb_evaluates_breakpoint_condition_p ()
+      || !target_supports_evaluation_of_breakpoint_conditions ())
+    return;
+
+  /* Do a first pass to check for locations with no assigned
+     conditions or conditions that fail to parse to a valid agent expression
+     bytecode.  If any of these happen, then it's no use to send conditions
+     to the target since this location will always trigger and generate a
+     response back to GDB.  */
+
+  bl->cond_bytecode = parse_cond_to_aexpr (bl->address,
+					   bl->cond.get ());
+  bl->target_info.conditions.push_back (bl->cond_bytecode.get ());
+  bl->overlay_target_info.conditions.push_back (bl->cond_bytecode.get ());
+
+  return;
 }
 
 /* Based on location BL, create a list of breakpoint conditions to be
@@ -5115,6 +5154,7 @@ watchpoints_triggered (struct target_waitstatus *ws)
 
 #define BP_TEMPFLAG 1
 #define BP_HARDWAREFLAG 2
+#define BP_FAST_CONDITIONAL 3
 
 /* Evaluate watchpoint condition expression and check if its value
    changed.
@@ -7375,6 +7415,7 @@ init_bp_location (struct bp_location *loc, const struct bp_location_ops *ops,
     case bp_tracepoint:
     case bp_fast_tracepoint:
     case bp_static_tracepoint:
+    case bp_fast_conditional:
       loc->loc_type = bp_loc_other;
       break;
     default:
@@ -7426,6 +7467,19 @@ static void
 add_to_breakpoint_chain (struct breakpoint *b)
 {
   struct breakpoint *b1;
+  if (b->type == bp_fast_conditional)
+    {
+      b1 = fast_conditional_breakpoints;
+      if (b1 == 0)
+	fast_conditional_breakpoints = b;
+      else
+	{
+	  while (b1->next)
+	    b1 = b1->next;
+	  b1->next = b;
+	}
+      return;
+    }
 
   /* Add this breakpoint to the end of the chain so that a list of
      breakpoints will come out in order of increasing numbers.  */
@@ -9814,7 +9868,7 @@ create_breakpoint (struct gdbarch *gdbarch,
     }
 
   /* Fast tracepoints may have additional restrictions on location.  */
-  if (!pending && type_wanted == bp_fast_tracepoint)
+  if (!pending && (type_wanted == bp_fast_tracepoint || type_wanted == bp_fast_conditional))
     {
       int ix;
       struct linespec_sals *iter;
@@ -9945,6 +9999,167 @@ create_breakpoint (struct gdbarch *gdbarch,
   return 1;
 }
 
+static struct breakpoint *
+find_fast_conditional_bp (const struct breakpoint_ops *ops)
+{
+  struct breakpoint *bp;
+  ALL_FAST_COND_BREAKPOINTS (bp)
+  {
+    if (bp->ops == ops)
+      return bp;
+  }
+  return NULL;
+}
+
+int
+create_fast_conditional_breakpoint (struct gdbarch *gdbarch,
+		   const struct event_location *location, char *cond_string,
+		   int thread, char *extra_string,
+		   int parse_extra,
+		   int tempflag, enum bptype type_wanted,
+		   int ignore_count,
+		   enum auto_boolean pending_break_support,
+		   const struct breakpoint_ops *ops,
+		   int from_tty, int enabled, int internal,
+		   unsigned flags)
+{
+  struct linespec_result canonical;
+  struct cleanup *old_chain;
+  struct cleanup *bkpt_chain = NULL;
+  int pending = 0;
+  int task = 0;
+  int prev_bkpt_count = breakpoint_count;
+  int ix;
+  struct linespec_sals *iter;
+  struct breakpoint *bp;
+
+  gdb_assert (type_wanted == bp_fast_conditional);
+
+  gdb_assert (ops != NULL);
+
+  /* If extra_string isn't useful, set it to NULL.  */
+  if (extra_string != NULL && *extra_string == '\0')
+    extra_string = NULL;
+
+  init_linespec_result (&canonical);
+
+  TRY
+    {
+      ops->create_sals_from_location (location, &canonical, type_wanted);
+    }
+  CATCH (e, RETURN_MASK_ERROR)
+    {
+      /* If caller is interested in rc value from parse, set
+	 value.  */
+      if (e.error == NOT_FOUND_ERROR)
+	{
+	  /* If pending breakpoint support is turned off, throw
+	     error.  */
+
+	  if (pending_break_support == AUTO_BOOLEAN_FALSE)
+	    throw_exception (e);
+
+	  exception_print (gdb_stderr, e);
+
+          /* If pending breakpoint support is auto query and the user
+	     selects no, then simply return the error code.  */
+	  if (pending_break_support == AUTO_BOOLEAN_AUTO
+	      && !nquery (_("Make %s pending on future shared library load? "),
+			  bptype_string (type_wanted)))
+	    return 0;
+
+	  /* At this point, either the user was queried about setting
+	     a pending breakpoint and selected yes, or pending
+	     breakpoint behavior is on and thus a pending breakpoint
+	     is defaulted on behalf of the user.  */
+	  return 0;
+	}
+      else
+	throw_exception (e);
+    }
+  END_CATCH
+
+  if (VEC_empty (linespec_sals, canonical.sals))
+    return 0;
+
+  /* Create a chain of things that always need to be cleaned up.  */
+  old_chain = make_cleanup_destroy_linespec_result (&canonical);
+
+  /* ----------------------------- SNIP -----------------------------
+     Anything added to the cleanup chain beyond this point is assumed
+     to be part of a breakpoint.  If the breakpoint create succeeds
+     then the memory is not reclaimed.  */
+  bkpt_chain = make_cleanup (null_cleanup, 0);
+
+  /* Resolve all line numbers to PC's and verify that the addresses
+     are ok for the target.  */
+  for (ix = 0; VEC_iterate (linespec_sals, canonical.sals, ix, iter); ++ix)
+    breakpoint_sals_to_pc (&iter->sals);
+
+  /* Fast conditional breakpoints impose special restrictions.  */
+  for (ix = 0; VEC_iterate (linespec_sals, canonical.sals, ix, iter); ++ix)
+    check_fast_tracepoint_sals (gdbarch, &iter->sals);
+
+  /* Verify that condition can be parsed, before setting any
+     breakpoints.  Allocate a separate condition expression for each
+     breakpoint.  */
+
+      //if (parse_extra)
+        //{
+	  char *rest;
+	  struct linespec_sals *lsal;
+
+	  lsal = VEC_index (linespec_sals, canonical.sals, 0);
+
+	  /* Here we only parse 'arg' to separate condition
+	     from thread number, so parsing in context of first
+	     sal is OK.  When setting the breakpoint we'll
+	     re-parse it in context of each sal.  */
+
+	  find_condition_and_thread (extra_string, lsal->sals.sals[0].pc,
+				     &cond_string, &thread, &task, &rest);
+	  if (cond_string)
+	    make_cleanup (xfree, cond_string);
+	  if (rest)
+	    make_cleanup (xfree, rest);
+	  if (rest)
+	    extra_string = rest;
+	  else
+	    extra_string = NULL;
+       // }
+
+      ops->create_breakpoints_sal (gdbarch, &canonical,
+				   cond_string, extra_string, type_wanted,
+				   tempflag ? disp_del : disp_donttouch,
+				   thread, task, ignore_count, ops,
+				   from_tty, enabled, internal, flags);
+
+
+
+  if (VEC_length (linespec_sals, canonical.sals) > 1)
+    {
+      warning (_("Multiple breakpoints were set.\nUse the "
+		 "\"delete\" command to delete unwanted breakpoints."));
+      prev_breakpoint_count = prev_bkpt_count;
+    }
+
+  /* That's it.  Discard the cleanups for data inserted into the
+     breakpoint.  */
+  discard_cleanups (bkpt_chain);
+  /* But cleanup everything else.  */
+  do_cleanups (old_chain);
+
+  /* error call may happen here - have BKPT_CHAIN already discarded.  */
+  bp = find_fast_conditional_bp (ops);
+
+  if (bp == NULL)
+    return -1;
+
+
+  insert_fast_contitional_breakpoint (bp);
+  return 1;
+}
+
 /* Set a breakpoint.
    ARG is a string describing breakpoint address,
    condition, and thread.
@@ -9959,6 +10174,9 @@ break_command_1 (char *arg, int flag, int from_tty)
   enum bptype type_wanted = (flag & BP_HARDWAREFLAG
 			     ? bp_hardware_breakpoint
 			     : bp_breakpoint);
+  type_wanted = (flag & BP_FAST_CONDITIONAL
+		  ? bp_fast_conditional
+		  : type_wanted);
   struct breakpoint_ops *ops;
   struct event_location *location;
   struct cleanup *cleanup;
@@ -9973,19 +10191,59 @@ break_command_1 (char *arg, int flag, int from_tty)
   else
     ops = &bkpt_breakpoint_ops;
 
-  create_breakpoint (get_current_arch (),
-		     location,
-		     NULL, 0, arg, 1 /* parse arg */,
-		     tempflag, type_wanted,
-		     0 /* Ignore count */,
-		     pending_break_support,
-		     ops,
-		     from_tty,
-		     1 /* enabled */,
-		     0 /* internal */,
-		     0);
+  if (type_wanted == bp_fast_conditional)
+    {
+      create_fast_conditional_breakpoint (get_current_arch (),
+      		     location,
+      		     NULL, 0, arg, 1 /* parse arg */,
+      		     tempflag, type_wanted,
+      		     0 /* Ignore count */,
+      		     pending_break_support,
+      		     ops,
+      		     from_tty,
+      		     1 /* enabled */,
+      		     0 /* internal */,
+      		     0);
+    }
+  else
+    {
+      create_breakpoint (get_current_arch (),
+      		     location,
+      		     NULL, 0, arg, 1 /* parse arg */,
+      		     tempflag, type_wanted,
+      		     0 /* Ignore count */,
+      		     pending_break_support,
+      		     ops,
+      		     from_tty,
+      		     1 /* enabled */,
+      		     0 /* internal */,
+      		     0);
+    }
   do_cleanups (cleanup);
 }
+
+/*
+static void
+fast_cond_break_command_1 (char *arg, int flag, int from_tty)
+{
+  enum bptype type_wanted = (flag & BP_FAST_CONDITIONAL
+			      ? bp_fast_conditional
+			      : bp_breakpoint);
+  struct event_location *location;
+  struct breakpoint_ops *ops;
+  if (type_wanted != bp_fast_conditional)
+    break_command_1 (arg, flag, from_tty);
+
+  location = string_to_event_location (&arg, current_language);
+  cleanup = make_cleanup_delete_event_location (location);
+
+  ops = &bkpt_breakpoint_ops;
+
+
+
+
+}
+*/
 
 /* Helper function for break_command_1 and disassemble_command.  */
 
@@ -10068,6 +10326,12 @@ static void
 thbreak_command (char *arg, int from_tty)
 {
   break_command_1 (arg, (BP_TEMPFLAG | BP_HARDWAREFLAG), from_tty);
+}
+
+static void
+cfbreak_command (char *arg, int from_tty)
+{
+  break_command_1 (arg, BP_FAST_CONDITIONAL, from_tty);
 }
 
 static void
@@ -12200,6 +12464,54 @@ bp_location_compare (const void *ap, const void *bp)
   return (a > b) - (a < b);
 }
 
+static void
+insert_fast_contitional_breakpoint (struct breakpoint *b)
+{
+  struct bp_location **locations, **head_locations, *loc;
+  unsigned int bp_location_count = 0, i = 0;
+  struct cleanup *cleanups = save_current_space_and_thread ();
+
+  for (loc = b->loc; loc; loc = loc->next)
+    bp_location_count++;
+
+  locations = XNEWVEC (struct bp_location *, bp_location_count);
+  head_locations = locations;
+
+  for (loc = b->loc; loc; loc = loc->next)
+    *locations++ = loc;
+
+  qsort (head_locations, bp_location_count, sizeof (*bp_location),
+	 bp_location_compare);
+
+  for (i=0; i < bp_location_count; i++)
+    {
+      CORE_ADDR addr;
+      loc = head_locations[i];
+
+      switch_to_program_space_and_thread (loc->pspace);
+
+      addr = overlay_unmapped_address (loc->address, loc->section);
+      loc->overlay_target_info = loc->target_info;
+      loc->overlay_target_info.reqstd_address = addr;
+
+      build_target_fast_condition_list (loc);
+
+      TRY
+      {
+	int val = target_insert_fast_conditional_breakpoint (loc->gdbarch,
+					    &loc->overlay_target_info);
+      }
+      CATCH (e, RETURN_MASK_ALL)
+      {
+      }
+
+    }
+
+
+  do_cleanups (cleanups);
+  xfree (head_locations);
+}
+
 /* Set bp_location_placed_address_before_address_max and
    bp_location_shadow_len_after_address_max according to the current
    content of the bp_location array.  */
@@ -12409,13 +12721,13 @@ update_global_location_list (enum ugll_insert_mode insert_mode)
   cleanups = make_cleanup (xfree, old_location);
 
   ALL_BREAKPOINTS (b)
-    for (loc = b->loc; loc; loc = loc->next)
+    for (loc = b->loc; loc && b->type != bp_fast_conditional ; loc = loc->next)
       bp_location_count++;
 
   bp_location = XNEWVEC (struct bp_location *, bp_location_count);
   locp = bp_location;
   ALL_BREAKPOINTS (b)
-    for (loc = b->loc; loc; loc = loc->next)
+    for (loc = b->loc; loc && b->type != bp_fast_conditional ; loc = loc->next)
       *locp++ = loc;
   qsort (bp_location, bp_location_count, sizeof (*bp_location),
 	 bp_location_compare);
@@ -16156,6 +16468,7 @@ _initialize_breakpoint (void)
     = register_objfile_data_with_cleanup (NULL, free_breakpoint_probes);
 
   breakpoint_chain = 0;
+  fast_conditional_breakpoints = 0;
   /* Don't bother to call set_breakpoint_count.  $bpnum isn't useful
      before a breakpoint is set.  */
   breakpoint_count = 0;
@@ -16205,6 +16518,12 @@ Set a temporary hardware assisted breakpoint.\n\
 Like \"hbreak\" except the breakpoint is only temporary,\n\
 so it will be deleted when hit.\n\
 \n"
+BREAK_ARGS_HELP ("thbreak")));
+  set_cmd_completer (c, location_completer);
+
+  c = add_com ("cfbreak", class_breakpoint, cfbreak_command, _("\
+Set a fast conditional breakpoint.\n\
+The In-Process Agent is used to avoid unnecessary context switches. \n"
 BREAK_ARGS_HELP ("thbreak")));
   set_cmd_completer (c, location_completer);
 
