@@ -5947,20 +5947,15 @@ conditional_stop (struct gdb_breakpoint *bpoint, unsigned char *regs)
       if (condition_true_at_tracepoint ((struct tracepoint_hit_ctx *)&ctx,
 					ctx.tpoint))
 	{
-	  printf("condition true\n");
+	  //printf("condition true\n");
 	  stop_conditional_bp ();
 
 	}
       else
 	{
-	  printf("condition false\n");
+	  //printf("condition false\n");
 	}
     }
-  else
-    {
-      printf("No condition...\n");
-    }
-
 }
 
 /* These global variables points to the corresponding functions.  This is
@@ -6142,6 +6137,16 @@ install_fast_conditional_breakpoint (struct gdb_breakpoint *tpoint, int ins_size
 
   unsigned char fjump[MAX_JUMP_SIZE];
   ULONGEST fjump_size;
+
+  if (agent_loaded_p ())
+    download_trace_state_variables ();
+
+  if (agent_loaded_p ())
+    {
+      if (write_inferior_integer (ipa_sym_addrs.addr_ipa_tdesc_idx,
+				  target_get_ipa_tdesc_idx ()))
+	error ("Error setting ipa_tdesc_idx variable in lib");
+    }
 
   if (ins_size < target_get_min_fast_tracepoint_insn_len ())
     {
